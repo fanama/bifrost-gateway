@@ -1,0 +1,54 @@
+{{define "page_chat"}}
+{{template "head" .}}
+<body hx-boost="true">
+{{template "nav" .}}
+<main id="main" class="page">
+  <div class="page-head"><h1>Discussion</h1></div>
+  <div id="chat-error"></div>
+  <div class="chat">
+    <form id="chat-form" class="chat-form card" hx-post="/chat/send" hx-target="#chat-messages" hx-swap="innerHTML">
+      <div class="row">
+        <select name="config_id" required>
+          <option value="" disabled>Choisir une configuration</option>
+          {{range .Configs}}<option value="{{.ID}}" {{if .Active}}selected{{end}}>{{.Name}} — {{.Model}} ({{.Provider}}){{if .Active}} ✓{{end}}</option>{{end}}
+        </select>
+        <input type="hidden" name="history" id="chat-history" value="">
+        <button class="btn" type="submit">Envoyer</button>
+      </div>
+      <label>Message
+        <textarea name="message" id="chat-message" placeholder="Votre message…" rows="3" required></textarea>
+      </label>
+    </form>
+    <div id="chat-messages" class="chat-messages">
+      {{template "chat_placeholder" .}}
+    </div>
+  </div>
+</main>
+{{template "tail" .}}
+<script>
+document.addEventListener('htmx:beforeRequest', function(evt){
+  var el = evt.detail.elt;
+  if (el && el.id === 'chat-form'){
+    var items = [];
+    document.querySelectorAll('#chat-messages .chat-message').forEach(function(node){
+      items.push({role: node.dataset.role, content: node.dataset.content});
+    });
+    document.getElementById('chat-history').value = JSON.stringify(items);
+  }
+});
+</script>
+</body>
+</html>
+{{end}}
+
+{{define "chat_placeholder"}}<div class="chat-empty">Aucun message. Choisissez une configuration, posez votre question et envoyez.</div>{{end}}
+
+{{define "chat_messages"}}
+{{range .Messages}}
+<div class="chat-message {{.Role}}" data-role="{{.Role}}" data-content="{{.Content}}">
+  <div class="bubble">{{.Content}}</div>
+</div>
+{{else}}
+{{template "chat_placeholder" .}}
+{{end}}
+{{end}}

@@ -1,0 +1,260 @@
+{{define "page_projects"}}
+{{template "head" .}}
+<body hx-boost="true">
+{{template "nav" .}}
+<main id="main" class="page">
+  <div class="page-head">
+    <h1>Projets</h1>
+    <button class="btn" type="button" onclick="document.getElementById('project-form-zone').showModal()">+ Nouveau projet</button>
+  </div>
+  <div id="projects-error"></div>
+  <dialog id="project-form-zone" class="card">
+    <h3 style="margin-top:0">Nouveau projet</h3>
+    <form hx-post="/projects" hx-target="#projects-list" hx-swap="innerHTML"
+          hx-on::after-request="if(event.detail.successful){this.closest('dialog').close()}">
+      <label>Nom
+        <input name="name" placeholder="ex : Equipe Data" required>
+      </label>
+      <label>Description
+        <input name="description" placeholder="optionnel">
+      </label>
+      <div style="display:flex;gap:10px">
+        <button class="btn" type="submit">Creer le projet</button>
+        <button class="btn ghost" type="button" onclick="this.closest('dialog').close()">Annuler</button>
+      </div>
+    </form>
+  </dialog>
+  <section id="projects-list">
+    {{template "project_rows" .}}
+  </section>
+</main>
+{{template "tail" .}}
+</body>
+</html>
+{{end}}
+
+{{define "project_rows"}}
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Nom</th><th>Description</th><th>Configurations</th><th></th></tr></thead>
+    <tbody>
+    {{range .Projects}}
+      <tr>
+        <td><strong>{{.Name}}</strong></td>
+        <td class="muted">{{.Description}}</td>
+        <td>{{.ConfigCount}}</td>
+        <td class="actions"><a class="btn small" href="/projects/{{.ID}}">Ouvrir</a></td>
+      </tr>
+    {{else}}
+      <tr><td colspan="4" class="muted center">Aucun projet. Cliquez sur &laquo; Nouveau projet &raquo; pour commencer.</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+</div>
+{{end}}
+
+{{define "page_project_detail"}}
+{{template "head" .}}
+<body hx-boost="true">
+{{template "nav" .}}
+<main id="main" class="page">
+  <p><a href="/projects">&larr; Retour aux projets</a></p>
+  <div class="page-head">
+    <h1>{{.Project.Name}}</h1>
+    <button class="btn" type="button" onclick="document.getElementById('config-form-zone').showModal()">+ Nouvelle configuration</button>
+  </div>
+  <div id="project-config-error"></div>
+  <section id="project-configs-section">
+    {{template "project_configs_section" .}}
+  </section>
+
+  <hr style="border:none;border-top:1px solid var(--line);margin:30px 0">
+  <div id="key-error"></div>
+  <section id="project-keys-section">
+    {{template "project_keys_section" .}}
+  </section>
+</main>
+{{template "tail" .}}
+<script>
+(function(){
+  var urlMap = {
+    {{range .Providers}}'{{.Name}}':'{{.BaseURL}}',
+    {{end}}
+  };
+  document.addEventListener('change', function(e){
+    if(e.target && e.target.id === 'cfg-provider'){
+      var url = document.getElementById('cfg-base-url');
+      if(url) url.value = urlMap[e.target.value] || '';
+    }
+  });
+})();
+</script>
+</body>
+</html>
+{{end}}
+
+{{define "project_configs_section"}}
+{{template "config_form" .Form}}
+{{template "configs_scoped_list" .}}
+{{end}}
+
+{{define "config_form"}}
+<dialog id="config-form-zone" class="card">
+  <h3 style="margin-top:0">{{if .IsCreate}}Nouvelle configuration{{else}}Modifier : {{.Editing.Name}}{{end}}</h3>
+
+  <form hx-post="{{.Action}}" hx-target="#project-configs-section" hx-swap="innerHTML"
+        hx-on::after-request="if(event.detail.successful){this.closest('dialog').close()}">
+    <div class="grid2">
+      <label>Nom
+        <input name="name" placeholder="ex : Ollama local" value="{{if not .IsCreate}}{{.Editing.Name}}{{end}}" required>
+      </label>
+      <label>Provider
+        <select id="cfg-provider" name="provider" required>
+          <option value="" disabled {{if .IsCreate}}selected{{end}}>— choisir —</option>
+          {{range .Providers}}
+          <option value="{{.}}" {{if eq $.SelectedProvider .}}selected{{end}}>{{.}}</option>
+          {{end}}
+        </select>
+      </label>
+      <label>Modele
+        <input name="model" list="cfg-models" placeholder="ex : gemma4:e4b" value="{{if not .IsCreate}}{{.Editing.Model}}{{end}}" required>
+      </label>
+      <label>Base URL
+        <input name="base_url" id="cfg-base-url" placeholder="auto selon le provider" value="{{if not .IsCreate}}{{.Editing.BaseURL}}{{end}}">
+      </label>
+      <label>API Key
+        <input name="api_key" type="password" placeholder="laisser vide pour Ollama local" value="{{if not .IsCreate}}{{.Editing.APIKey}}{{end}}">
+      </label>
+      <label>Cost Center (facturation)
+        <input name="cost_center" placeholder="ex : CC-ING" value="{{if not .IsCreate}}{{.Editing.CostCenter}}{{end}}" required>
+      </label>
+    </div>
+    <datalist id="cfg-models">
+      {{range .ModelHints}}<option value="{{.}}">{{end}}
+    </datalist>
+
+    <details class="gen-params" {{if not .IsCreate}}open{{end}}>
+      <summary>Parametres de generation</summary>
+      <div class="grid2">
+        <label>Temperature
+          <input name="temperature" type="number" step="0.1" min="0" max="2" placeholder="ex: 0.7"
+                 value="{{if .UseDefaults}}0.7{{else}}{{f .Editing.Temperature}}{{end}}">
+        </label>
+        <label>Top P
+          <input name="top_p" type="number" step="0.05" min="0" max="1" placeholder="ex: 0.9"
+                 value="{{if .UseDefaults}}0.9{{else}}{{f .Editing.TopP}}{{end}}">
+        </label>
+        <label>Max Tokens
+          <input name="max_tokens" type="number" step="1" min="1" placeholder="ex: 1024"
+                 value="{{if .UseDefaults}}1024{{else}}{{i .Editing.MaxTokens}}{{end}}">
+        </label>
+        <label>Response Format
+          <select name="response_format">
+            <option value="" {{if .IsCreate}}selected{{else}}{{if eq .Editing.ResponseFormat ""}}selected{{end}}{{end}}>aucun</option>
+            <option value="text" {{if not .IsCreate}}{{if eq .Editing.ResponseFormat "text"}}selected{{end}}{{end}}>texte</option>
+            <option value="json_object" {{if not .IsCreate}}{{if eq .Editing.ResponseFormat "json_object"}}selected{{end}}{{end}}>JSON strict</option>
+          </select>
+        </label>
+        <label>Frequency Penalty
+          <input name="frequency_penalty" type="number" step="0.1" min="-2" max="2" placeholder="ex: 0"
+                 value="{{if not .IsCreate}}{{f .Editing.FrequencyPenalty}}{{end}}">
+        </label>
+        <label>Presence Penalty
+          <input name="presence_penalty" type="number" step="0.1" min="-2" max="2" placeholder="ex: 0"
+                 value="{{if not .IsCreate}}{{f .Editing.PresencePenalty}}{{end}}">
+        </label>
+      </div>
+    </details>
+
+    <label>System Prompt
+      <textarea name="system_prompt" rows="3" placeholder="instructions systeme (optionnel)">{{if not .IsCreate}}{{.Editing.SystemPrompt}}{{end}}</textarea>
+    </label>
+
+    <div style="display:flex;gap:10px">
+      <button class="btn" type="submit">{{if .IsCreate}}Creer la configuration{{else}}Enregistrer{{end}}</button>
+      <button class="btn ghost" type="button" onclick="this.closest('dialog').close()">Annuler</button>
+    </div>
+  </form>
+</dialog>
+{{end}}
+
+{{define "configs_scoped_list"}}
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Nom</th><th>Provider</th><th>Modele</th><th>Base URL</th><th>Cost Center</th><th>Statut</th><th>Actions</th></tr></thead>
+    <tbody>
+    {{range .Configs}}
+      <tr class="{{if .Active}}active{{end}}">
+        <td>{{.Name}}</td>
+        <td>{{.Provider}}</td>
+        <td>{{.Model}}</td>
+        <td class="muted">{{.BaseURL}}</td>
+        <td>{{.CostCenter}}</td>
+        <td>{{if .Active}}<span class="badge ok">Actif</span>{{else}}<span class="badge">Inactif</span>{{end}}</td>
+        <td class="actions">
+          {{if not .Active}}<button class="btn small" hx-post="/projects/{{$.Project.ID}}/configs/{{.ID}}/activate" hx-target="#project-configs-section" hx-swap="innerHTML">Activer</button>{{end}}
+          <button class="btn small" hx-post="/projects/{{$.Project.ID}}/configs/{{.ID}}/duplicate" hx-target="#project-configs-section" hx-swap="innerHTML" title="Dupliquer">Dupliquer</button>
+          <button class="btn small" hx-get="/projects/{{$.Project.ID}}/configs/{{.ID}}/edit" hx-target="#config-form-zone" hx-swap="outerHTML"
+                  hx-on::after-request="document.getElementById('config-form-zone').showModal()">Modifier</button>
+          <button class="btn small danger" hx-delete="/projects/{{$.Project.ID}}/configs/{{.ID}}" hx-confirm="Supprimer cette configuration ?" hx-target="#project-configs-section" hx-swap="innerHTML">Supprimer</button>
+        </td>
+      </tr>
+    {{else}}
+      <tr><td colspan="7" class="muted center">Aucune configuration dans ce projet. Cliquez sur &laquo; Nouvelle configuration &raquo;.</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+</div>
+{{end}}
+
+{{define "project_keys_section"}}
+<div class="page-head" style="margin-top:8px">
+  <h1 style="font-size:1.2rem">API keys</h1>
+  <button class="btn" type="button" onclick="document.getElementById('key-form-zone').showModal()">+ Nouvelle cle</button>
+</div>
+
+{{if .NewKey}}
+<div class="card" style="border-color:var(--ok)">
+  <p><strong style="color:var(--ok)">Cle creee.</strong> Copiez-la maintenant : elle ne sera plus jamais affichee.</p>
+  <div style="display:flex;gap:10px;align-items:center">
+    <code id="new-key-value" style="flex:1;display:block;padding:10px;border-radius:8px;background:var(--panel2);border:1px solid var(--line);overflow:auto;white-space:nowrap">{{.NewKey}}</code>
+    <button class="btn small" type="button"
+            onclick="navigator.clipboard.writeText(document.getElementById('new-key-value').textContent).then(function(){this.textContent='Copie !';this.disabled=true;}.bind(this))">Copier</button>
+  </div>
+</div>
+{{end}}
+
+<dialog id="key-form-zone" class="card">
+  <h3 style="margin-top:0">Nouvelle cle API</h3>
+  <form hx-post="/projects/{{.Project.ID}}/keys" hx-target="#project-keys-section" hx-swap="innerHTML"
+        hx-on::after-request="if(event.detail.successful){this.closest('dialog').close()}">
+    <label>Nom
+      <input name="name" placeholder="ex : CI / deploy" required>
+    </label>
+    <div style="display:flex;gap:10px">
+      <button class="btn" type="submit">Creer la cle</button>
+      <button class="btn ghost" type="button" onclick="this.closest('dialog').close()">Annuler</button>
+    </div>
+  </form>
+</dialog>
+
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Nom</th><th>Prefixe</th><th>Cree le</th><th></th></tr></thead>
+    <tbody>
+    {{range .Keys}}
+      <tr>
+        <td>{{.Name}}</td>
+        <td><code>{{.Prefix}}…</code></td>
+        <td class="muted">{{.CreatedAt.Format "2006-01-02"}}</td>
+        <td class="actions">
+          <button class="btn small danger" hx-delete="/projects/{{$.Project.ID}}/keys/{{.ID}}" hx-confirm="Revoquer cette cle ? Elle cessera immediatement de fonctionner." hx-target="#project-keys-section" hx-swap="innerHTML">Revoquer</button>
+        </td>
+      </tr>
+    {{else}}
+      <tr><td colspan="4" class="muted center">Aucune cle. Creez-en une pour appeler <code>/v1/chat/completions</code>.</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+</div>
+{{end}}

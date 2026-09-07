@@ -1,0 +1,18 @@
+# ---- Build artifacts ----
+bin/
+certs/
+*.exe
+*.test
+*.out
+
+# ---- Secrets ----
+.env
+
+# ---- Dynamic runtime state (never commit) ----
+data/
+
+# ---- Transient ----
+*.tmp
+
+# ---- OS ----
+.DS_Store

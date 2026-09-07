@@ -1,0 +1,63 @@
+{{define "page_models"}}
+{{template "head" .}}
+<body hx-boost="true">
+{{template "nav" .}}
+<main id="main" class="page">
+  <div class="page-head">
+    <h1>Modeles</h1>
+    <button class="btn" type="button" onclick="document.getElementById('model-form-zone').showModal()">+ Ajouter un modele</button>
+  </div>
+  <div id="models-error"></div>
+  <dialog id="model-form-zone" class="card">
+    <h3 style="margin-top:0">Nouveau modele</h3>
+    <form hx-post="/models" hx-target="#models-section" hx-swap="innerHTML"
+          hx-on::after-request="if(event.detail.successful){this.closest('dialog').close()}">
+      <label>Nom du modele
+        <input name="name" placeholder="ex : qwen3:8b" required>
+      </label>
+      <label>Provider
+        <select name="provider" required>
+          <option value="" disabled selected>— choisir —</option>
+          {{range .Providers}}
+          <option value="{{.}}">{{.}}</option>
+          {{end}}
+        </select>
+      </label>
+      <div style="display:flex;gap:10px">
+        <button class="btn" type="submit">Ajouter au catalogue</button>
+        <button class="btn ghost" type="button" onclick="this.closest('dialog').close()">Annuler</button>
+      </div>
+    </form>
+  </dialog>
+  <section id="models-section">
+    {{template "models_list" .}}
+  </section>
+</main>
+{{template "tail" .}}
+</body>
+</html>
+{{end}}
+
+{{define "models_list"}}
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Modele</th><th>Provider</th><th>Source</th><th></th></tr></thead>
+    <tbody>
+    {{range .Models}}
+      <tr>
+        <td>{{.Name}}</td>
+        <td>{{.Provider}}</td>
+        <td class="muted">{{.Source}}</td>
+        <td class="actions">
+          {{if eq .Source "catalogue"}}
+          <button class="btn small danger" hx-delete="/models/{{.ID}}" hx-confirm="Retirer ce modele du catalogue ?" hx-target="#models-section" hx-swap="innerHTML">Retirer</button>
+          {{end}}
+        </td>
+      </tr>
+    {{else}}
+      <tr><td colspan="4" class="muted center">Aucun modele configure.</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+</div>
+{{end}}

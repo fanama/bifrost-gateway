@@ -1,0 +1,10 @@
+*
+!bin/
+!bin/bridge-gateway-linux
+!config.yaml
+!certs/
+!certs/ca-certificates.crt
+!compose.yml
+!Dockerfile
+!Makefile
+data/
