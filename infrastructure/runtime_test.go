@@ -1,6 +1,7 @@
 package infrastructure
 
 import (
+	"context"
 	"testing"
 
 	"bridge-gateway/domain"
@@ -84,5 +85,106 @@ func TestDynamicAccountDefaultsOllamaBaseURL(t *testing.T) {
 	}
 	if pc.NetworkConfig.BaseURL != "http://localhost:11434" {
 		t.Errorf("expected default ollama base URL, got %q", pc.NetworkConfig.BaseURL)
+	}
+}
+
+func TestToModelProviderSupported(t *testing.T) {
+	cases := []struct {
+		input string
+		want  schemas.ModelProvider
+	}{
+		{"google", schemas.Gemini},
+		{"gemini", schemas.Gemini},
+		{"mistral", schemas.Mistral},
+		{"mistralai", schemas.Mistral},
+		{"openai", schemas.OpenAI},
+		{"ollama", schemas.Ollama},
+		{"anthropic", schemas.Anthropic},
+		{"claude", schemas.Anthropic},
+		{"groq", schemas.Groq},
+		{"azure", schemas.Azure},
+		{"vertex", schemas.Vertex},
+		{"my-custom-gateway", schemas.OpenAI},
+		{"custom-proxy", schemas.OpenAI},
+	}
+
+	for _, tc := range cases {
+		p, err := ToModelProvider(tc.input)
+		if err != nil {
+			t.Errorf("ToModelProvider(%q) unexpected err: %v", tc.input, err)
+		}
+		if p != tc.want {
+			t.Errorf("ToModelProvider(%q) = %v, want %v", tc.input, p, tc.want)
+		}
+	}
+}
+
+func TestResolveEnv(t *testing.T) {
+	t.Setenv("CUSTOM_API_KEY", "secret-token-123")
+
+	cases := []struct {
+		input string
+		want  string
+	}{
+		{"{env:CUSTOM_API_KEY}", "secret-token-123"},
+		{"env:CUSTOM_API_KEY", "secret-token-123"},
+		{"${CUSTOM_API_KEY}", "secret-token-123"},
+		{"$CUSTOM_API_KEY", "secret-token-123"},
+		{"plain-secret", "plain-secret"},
+		{"", ""},
+	}
+
+	for _, tc := range cases {
+		got := ResolveEnv(tc.input)
+		if got != tc.want {
+			t.Errorf("ResolveEnv(%q) = %q, want %q", tc.input, got, tc.want)
+		}
+	}
+}
+
+func TestDefaultBaseURLFor(t *testing.T) {
+	if defaultBaseURLFor(schemas.Mistral) != "https://api.mistral.ai/v1" {
+		t.Errorf("unexpected mistral baseURL: %s", defaultBaseURLFor(schemas.Mistral))
+	}
+	if defaultBaseURLFor(schemas.OpenAI) != "https://api.openai.com/v1" {
+		t.Errorf("unexpected openai baseURL: %s", defaultBaseURLFor(schemas.OpenAI))
+	}
+}
+
+type fakeProviderRepo struct {
+	providers []domain.Provider
+}
+
+func (f *fakeProviderRepo) List(_ context.Context) ([]domain.Provider, error) {
+	return f.providers, nil
+}
+func (f *fakeProviderRepo) Get(_ context.Context, id string) (*domain.Provider, error) {
+	for _, p := range f.providers {
+		if p.ID == id || p.Name == id {
+			return &p, nil
+		}
+	}
+	return nil, domain.ErrProviderNotFound
+}
+func (f *fakeProviderRepo) Create(_ context.Context, _ *domain.Provider) error { return nil }
+func (f *fakeProviderRepo) Update(_ context.Context, _ *domain.Provider) error { return nil }
+func (f *fakeProviderRepo) Delete(_ context.Context, _ string) error           { return nil }
+
+func TestDynamicAccountWithFallbackProviderKey(t *testing.T) {
+	repo := &fakeProviderRepo{
+		providers: []domain.Provider{
+			{ID: "p1", Name: "mistral", BaseURL: "https://api.mistral.ai/v1", APIKey: "sk-mistral-key"},
+		},
+	}
+	llm := NewBifrostLLMProvider(repo)
+	cfg := &domain.ChatConfig{
+		ID:       "cfg-1",
+		Provider: "mistral",
+		Model:    "mistral-large-latest",
+	}
+
+	p := llm.resolveProvider(context.Background(), cfg.Provider)
+	if p == nil || p.APIKey != "sk-mistral-key" {
+		t.Fatalf("expected resolved provider with API key, got %#v", p)
 	}
 }

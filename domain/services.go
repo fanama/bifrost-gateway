@@ -8,10 +8,9 @@ func NewEnrichmentService() *EnrichmentService {
 
 func (s *EnrichmentService) Enrich(req *ChatRequest) (*EnrichedRequest, error) {
 	rawMetadata := ExtractMetadata(req)
-	attribution := rawMetadata.resolve()
-
-	if attribution.CostCenter == "" {
-		return nil, &MissingAttributionError{MissingFields: []string{"cost_center"}}
+	var attribution AttributionMetadata
+	if rawMetadata != nil {
+		attribution = rawMetadata.resolve()
 	}
 
 	messages := make([]ChatMessage, len(req.Messages))
@@ -35,22 +34,14 @@ func (s *EnrichmentService) Enrich(req *ChatRequest) (*EnrichedRequest, error) {
 		Model:          model,
 		Messages:       messages,
 		ResponseFormat: respFormat,
-		Labels: map[string]string{
-			"cost_center": attribution.CostCenter,
-		},
-		Temperature: req.Temperature,
-		MaxTokens:   req.MaxTokens,
-		Stream:      req.Stream,
+		Labels:         req.Labels,
+		Temperature:    req.Temperature,
+		MaxTokens:      req.MaxTokens,
+		Stream:         req.Stream,
 	}, nil
 }
 
 func (s *EnrichmentService) ValidateAttribution(req *ChatRequest) error {
-	rawMetadata := ExtractMetadata(req)
-	attribution := rawMetadata.resolve()
-
-	if attribution.CostCenter == "" {
-		return &MissingAttributionError{MissingFields: []string{"cost_center"}}
-	}
 	return nil
 }
 

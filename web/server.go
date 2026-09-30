@@ -213,7 +213,7 @@ func (s *Server) createProvider(w http.ResponseWriter, r *http.Request) {
 		s.renderToast(w, "#providers-error", "requête invalide")
 		return
 	}
-	if _, err := s.providers.Create(r.Context(), r.FormValue("name"), r.FormValue("base_url")); err != nil {
+	if _, err := s.providers.Create(r.Context(), r.FormValue("name"), r.FormValue("base_url"), r.FormValue("api_key")); err != nil {
 		s.renderToast(w, "#providers-error", err.Error())
 		return
 	}
@@ -226,7 +226,7 @@ func (s *Server) updateProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
-	if _, err := s.providers.Update(r.Context(), id, r.FormValue("name"), r.FormValue("base_url")); err != nil {
+	if _, err := s.providers.Update(r.Context(), id, r.FormValue("name"), r.FormValue("base_url"), r.FormValue("api_key")); err != nil {
 		s.renderToast(w, "#providers-error", err.Error())
 		return
 	}
@@ -562,7 +562,6 @@ func parseConfigForm(r *http.Request) *domain.ChatConfig {
 		BaseURL:          strings.TrimSpace(r.FormValue("base_url")),
 		APIKey:           strings.TrimSpace(r.FormValue("api_key")),
 		SystemPrompt:     strings.TrimSpace(r.FormValue("system_prompt")),
-		CostCenter:       strings.TrimSpace(r.FormValue("cost_center")),
 		Temperature:      parseFloatOpt(r.FormValue("temperature")),
 		TopP:             parseFloatOpt(r.FormValue("top_p")),
 		MaxTokens:        parseIntOpt(r.FormValue("max_tokens")),

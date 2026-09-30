@@ -173,9 +173,6 @@ func buildResponse(req *domain.EnrichedRequest) ChatCompletionResponse {
 	content := ""
 	if len(req.Messages) > 0 {
 		content = "Enriched request processed. Model: " + req.Model
-		if req.Labels != nil {
-			content += " | CostCenter: " + req.Labels["cost_center"]
-		}
 	}
 
 	return ChatCompletionResponse{

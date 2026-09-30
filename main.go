@@ -62,7 +62,7 @@ func main() {
 
 	migrateOrphanConfigs(configStore, projectStore)
 
-	llmProvider := infrastructure.NewBifrostLLMProvider()
+	llmProvider := infrastructure.NewBifrostLLMProvider(providerStore)
 
 	enrichmentService := domain.NewEnrichmentService()
 	projectUseCase := application.NewProjectUseCase(projectStore)
@@ -174,6 +174,10 @@ func defaultProviders() []domain.Provider {
 	return []domain.Provider{
 		{ID: "prov-ollama", Name: "ollama", BaseURL: ollamaBaseURL(), CreatedAt: now, UpdatedAt: now},
 		{ID: "prov-openai", Name: "openai", BaseURL: "https://api.openai.com/v1", CreatedAt: now, UpdatedAt: now},
+		{ID: "prov-mistral", Name: "mistral", BaseURL: "https://api.mistral.ai/v1", CreatedAt: now, UpdatedAt: now},
+		{ID: "prov-google", Name: "google", BaseURL: "", CreatedAt: now, UpdatedAt: now},
+		{ID: "prov-anthropic", Name: "anthropic", BaseURL: "https://api.anthropic.com/v1", CreatedAt: now, UpdatedAt: now},
+		{ID: "prov-groq", Name: "groq", BaseURL: "https://api.groq.com/openai/v1", CreatedAt: now, UpdatedAt: now},
 		{ID: "prov-vertex", Name: "vertex", BaseURL: "", CreatedAt: now, UpdatedAt: now},
 		{ID: "prov-azure", Name: "azure", BaseURL: "", CreatedAt: now, UpdatedAt: now},
 	}

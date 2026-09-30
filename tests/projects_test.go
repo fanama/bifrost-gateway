@@ -222,9 +222,9 @@ func TestConfigActiveIsScopedPerProject(t *testing.T) {
 	pidB, _ := projectsUC.Create(ctx, "B", "")
 
 	uc := application.NewConfigUseCase(store)
-	a1, _ := uc.Create(ctx, &domain.ChatConfig{Name: "A1", ProjectID: pidA.ID, Provider: "ollama", Model: "m", CostCenter: "CC"})
-	b1, _ := uc.Create(ctx, &domain.ChatConfig{Name: "B1", ProjectID: pidB.ID, Provider: "ollama", Model: "m", CostCenter: "CC"})
-	b2, _ := uc.Create(ctx, &domain.ChatConfig{Name: "B2", ProjectID: pidB.ID, Provider: "openai", Model: "m2", CostCenter: "CC"})
+	a1, _ := uc.Create(ctx, &domain.ChatConfig{Name: "A1", ProjectID: pidA.ID, Provider: "ollama", Model: "m"})
+	b1, _ := uc.Create(ctx, &domain.ChatConfig{Name: "B1", ProjectID: pidB.ID, Provider: "ollama", Model: "m"})
+	b2, _ := uc.Create(ctx, &domain.ChatConfig{Name: "B2", ProjectID: pidB.ID, Provider: "openai", Model: "m2"})
 
 	if _, err := uc.SetActive(ctx, pidA.ID, a1.ID); err != nil {
 		t.Fatalf("activate A1: %v", err)

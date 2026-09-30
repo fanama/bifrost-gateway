@@ -15,7 +15,6 @@ type ChatConfig struct {
 	BaseURL          string    `json:"base_url,omitempty"`
 	APIKey           string    `json:"api_key,omitempty"`
 	SystemPrompt     string    `json:"system_prompt,omitempty"`
-	CostCenter       string    `json:"cost_center"`
 	Temperature      *float64  `json:"temperature,omitempty"`
 	TopP             *float64  `json:"top_p,omitempty"`
 	MaxTokens        *int      `json:"max_tokens,omitempty"`
@@ -37,9 +36,6 @@ func (c *ChatConfig) Validate() error {
 	}
 	if strings.TrimSpace(c.Model) == "" {
 		missing = append(missing, "model")
-	}
-	if strings.TrimSpace(c.CostCenter) == "" {
-		missing = append(missing, "cost_center")
 	}
 	if len(missing) > 0 {
 		return &ValidationError{Fields: missing}

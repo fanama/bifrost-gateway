@@ -5,19 +5,18 @@
 [![Docker](https://img.shields.io/badge/Docker-Compose-blue)](https://www.docker.com/)
 [![DDD](https://img.shields.io/badge/Architecture-DDD-orange)](https://en.wikipedia.org/wiki/Domain-driven_design)
 
-**Bridge Gateway** est une passerelle d'acces API (API Gateway) intelligente basee sur **BifrostAI**. Ecrite en **Go**, elle utilise nativement le SDK BifrostAI pour un routage performant vers differents fournisseurs LLM (Ollama par defaut, OpenAI, Azure) tout en appliquant un pipeline d'enrichissement metier (FinOps, attribution, system prompt injection).
+**Bridge Gateway** est une passerelle d'acces API (API Gateway) intelligente basee sur **BifrostAI**. Ecrite en **Go**, elle utilise nativement le SDK BifrostAI pour un routage performant vers differents fournisseurs LLM (Ollama par defaut, OpenAI, Mistral, Google/Gemini, Anthropic, Groq, Azure, Vertex, passerelles privees compatibles OpenAI) tout en appliquant un pipeline d'enrichissement metier (system prompt injection, formatage de reponse, routage par modele).
 
 ---
 
 ## Fonctionnalites Cles
 
 * **SDK BifrostAI Native** : Utilise `github.com/maximhq/bifrost/core` directement en Go - pas de proxy HTTP intermediaire.
-* **Abstraction Multi-LLM** : Interface unique compatible avec le standard OpenAI pour requeter Ollama (defaut: `gemma4:e4b`), OpenAI, Azure, etc.
-* **UI Web HTMX (Clean Architecture)** : Interface de discussion, listing et gestion des modeles, gestion des providers, projet multi-tenant avec configurations et cles API, rendue cote serveur en fragments HTMX (`hx-boost`, OOB swaps) sans JavaScript externe.
-* **Enrichissement Metier** : Pipeline d'enrichissement sequentiel (5 etapes) applique a chaque requete entrante via middleware HTTP.
-* **Attribution & FinOps** : Validation stricte et injection automatique du label de facturation (`cost_center`).
-* **Configurations Multi-Providers** : Enregistrement de plusieurs configurations LLM (provider, modele, base URL, cle API, system prompt, cost center) persistees au format JSON.
-* **Gestion des providers** : Liste des fournisseurs (nom + base URL par defaut) gerable depuis l'UI (`/providers`) — alimente le select du formulaire de configuration et l'autofill de la Base URL. Seed des defauts au premier demarrage (`data/providers.json`).
+* **Abstraction Multi-LLM** : Interface unique compatible avec le standard OpenAI pour requeter Ollama (defaut: `gemma4:e4b`), OpenAI, Mistral, Google/Gemini, Anthropic, Groq, Azure, et n'importe quelle passerelle compatible OpenAI.
+* **UI Web HTMX (Clean Architecture)** : Interface de discussion, listing et gestion des modeles, gestion des providers (avec cles d'API), projets multi-tenant avec configurations et cles API, rendue cote serveur en fragments HTMX (`hx-boost`, OOB swaps) sans JavaScript externe.
+* **Enrichissement Metier** : Pipeline d'enrichissement applique a chaque requete entrante (injection de system prompt, format de reponse strict, modele par defaut).
+* **Configurations Multi-Providers** : Enregistrement de plusieurs configurations LLM (provider, modele, base URL, cle API, system prompt, parametres de generation) persistees au format JSON.
+* **Gestion des providers & Cles d'API** : Liste des fournisseurs (nom, base URL par defaut, cle d'API par defaut avec support des variables d'environnement ex: `{env:API_KEY}`) gerable depuis l'UI (`/providers`). Autofill et fallback automatique de la cle API et de l'URL lors des configurations. Seed des defauts au premier demarrage (`data/providers.json`).
 * **Catalogue de modeles** : Ajout/retrait de modeles (nom + provider) depuis l'UI (`/models`), fusionnes deduques avec `config.yaml` et les modeles utilises dans les configurations. Seed depuis `config.yaml` au premier demarrage (`data/models.json`).
 * **Projets multi-tenant** : Chaque configuration appartient a un projet ; les API keys sont creees par projet et authentifient les appels `/v1/chat/completions` (la configuration active du projet sert de modele/params). Une migration auto cree le projet par defaut `General`.
 * **Haute Performance** : Serveur HTTP Go natif avec gestion des timeouts et signaux de fermeture gracieuse.
@@ -35,26 +34,26 @@ flowchart TD
     end
 
     BifrostSDK -->|Ollama| Ollama[(Local Ollama - gemma4:e4b)]
-    BifrostSDK -->|OpenAI| OpenAI[(OpenAI API)]
+    BifrostSDK -->|OpenAI / Compatible| OpenAI[(OpenAI / Passerelles Privees)]
+    BifrostSDK -->|Mistral| Mistral[(Mistral API)]
+    BifrostSDK -->|Google / Gemini| Google[(Google Gemini)]
     BifrostSDK -->|Azure| Azure[(Azure OpenAI)]
 
     classDef goStyle fill:#00ADD8,stroke:#007D9C,stroke-width:2px,color:#fff,font-weight:bold;
     classDef extStyle fill:#ECEFF1,stroke:#546E7A,stroke-width:2px;
     class HTTP,MW,BifrostSDK goStyle;
-    class Ollama,OpenAI,Azure extStyle;
+    class Ollama,OpenAI,Mistral,Google,Azure extStyle;
 ```
 
 ### Pipeline d'Enrichissement
 
-Chaque requete passe par 5 etapes avant d'atteindre le LLM :
+Chaque requete passe par les etapes suivantes avant d'atteindre le LLM :
 
 | Etape | Regle | Comportement |
 |---|---|---|
-| **1** | **Validation Attribution** | Verifie `cost_center` dans les metadata. Sinon: `400 Bad Request`. |
-| **2** | **Injection System Prompt** | Si `system_prompt` configure et aucun role `system` present, injecte en premier message. |
-| **3** | **Modele par Defaut** | Si aucun modele specifie, applique le `default_model` de la cle API. |
-| **4** | **Format de Reponse** | Si non defini, applique le `response_format` configure (ex: JSON strict). |
-| **5** | **Tags FinOps** | Injecte `cost_center` dans le payload pour le suivi des couts. |
+| **1** | **Injection System Prompt** | Si `system_prompt` configure et aucun role `system` present, injecte en premier message. |
+| **2** | **Modele par Defaut** | Si aucun modele specifie, applique le `default_model` configure. |
+| **3** | **Format de Reponse** | Si non defini, applique le `response_format` configure (ex: JSON strict). |
 
 ---
 
@@ -75,10 +74,11 @@ gteway-local/
 │   ├── config.go              # ChatConfig (entite), ChatConfigRepository (interface)
 │   ├── project.go             # Project (entite) + ProjectRepository
 │   ├── apikey.go              # APIKey (entite, hash sha256) + APIKeyRepository
+│   ├── provider.go            # Provider (entite, baseURL + apiKey par defaut)
 │   ├── model.go               # ModelInfo (entite)
 │   ├── llm.go                 # LLMProvider (interface)
 │   ├── services.go            # EnrichmentService (pipeline d'enrichissement)
-│   ├── errors.go              # MissingAttributionError, ValidationError, erreurs entites
+│   ├── errors.go              # ValidationError, erreurs entites
 │   └── id.go                  # Generation d'identifiants (NewID)
 ├── application/               # Cas d'usage (orchestration, depend des interfaces domain)
 │   ├── chat.go                # ChatUseCase (envoyer un message vers le LLM)
@@ -160,7 +160,7 @@ L'application embarque une UI rendue cote serveur en HTMX (accessible a `http://
 | `/projects/{pid}/keys/{kid}` | DELETE | Revoque une cle API |
 | `/configs` | GET | Redirige vers `/projects` (ancienne URL) |
 
-Les configurations (provider, modele, base URL, cle API, system prompt, cost center, temperature, top_p, max_tokens, penalties, format de reponse) sont persistees dans `data/configs.json` et rattachees a un projet (`data/projects.json`). Les clefs API sont stockees sous forme d'empreinte SHA-256 dans `data/apikeys.json` (le secret en clair n'est jamais persistible). La navigation est propulsee par `hx-boost` (SPA-like) et les mises a jour par swaps HTMX (`innerHTML`, `outerHTML`, OOB). Le **system prompt et tous les parametres de generation de la configuration selectionnee** sont transmis au SDK Bifrost lors du chat : le system prompt est prependu comme message `system`, et les parametres partent dans les `ChatParameters` (temperature, top_p, max_tokens, penalties, response_format).
+Les configurations (provider, modele, base URL, cle API, system prompt, temperature, top_p, max_tokens, penalties, format de reponse) sont persistees dans `data/configs.json` et rattachees a un projet (`data/projects.json`). Les clefs API sont stockees sous forme d'empreinte SHA-256 dans `data/apikeys.json` (le secret en clair n'est jamais persistible). La navigation est propulsee par `hx-boost` (SPA-like) et les mises a jour par swaps HTMX (`innerHTML`, `outerHTML`, OOB). Le **system prompt et tous les parametres de generation de la configuration selectionnee** sont transmis au SDK Bifrost lors du chat : le system prompt est prependu comme message `system`, et les parametres partent dans les `ChatParameters` (temperature, top_p, max_tokens, penalties, response_format).
 
 ### 2. Tests
 
@@ -228,7 +228,7 @@ BIFROST_MASTER_KEY="cpZ75uPavZpwRLMjD0dj"
 
 Deux modes d'authentification sont supportes :
 
-* **Master key** (globale, via `BIFROST_MASTER_KEY`) — chemin historique pilote par le pipeline d'enrichissement :
+* **Master key** (globale, via `BIFROST_MASTER_KEY`) — requete directe avec routage et enrichissement standard :
 
 ```bash
 curl -X POST 'http://localhost:4000/v1/chat/completions' \
@@ -238,12 +238,7 @@ curl -X POST 'http://localhost:4000/v1/chat/completions' \
     "model": "gemma4:e4b",
     "messages": [
       {"role": "user", "content": "Explique-moi le fonctionnement de BifrostAI."}
-    ],
-    "metadata": {
-        "user_api_key_team_metadata": {
-            "cost_center": "CC-INGENIERIE"
-        }
-    }
+    ]
 }'
 ```
 
@@ -289,7 +284,7 @@ curl http://localhost:8080/health/liveness
 
 ## Configuration des Providers BifrostAI
 
-Le fichier `config.yaml` definit les modeles et les parametres de routage :
+Le fichier `config.yaml` definit les modeles et les parametres de routage par defaut :
 
 ```yaml
 model_list:
@@ -299,8 +294,8 @@ model_list:
       model: gemma4:e4b
 ```
 
-Les providers sont configures dans `infrastructure/account.go` via l'interface `schemas.Account` de BifrostAI :
+Les providers peuvent etre configures globalement dans `config.yaml` ou dynamiquement via l'interface `/providers` et `/projects` :
 
 * **Ollama** : Modele local par defaut (`gemma4:e4b`) sur `http://localhost:11434`
-* **OpenAI** : API OpenAI (GPT-4o)
-* **Azure** : Azure OpenAI Service
+* **OpenAI / Mistral / Anthropic / Groq / Google Gemini / Azure / Vertex**
+* **Passerelles compatibles OpenAI** : N'importe quelle API / proxy LLM respectant le protocole OpenAI avec une `baseURL` et `apiKey` personnalisees (support des variables d'environnement ex: `{env:SECRET_KEY}`).

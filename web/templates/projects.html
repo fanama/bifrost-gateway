@@ -77,14 +77,20 @@
 {{template "tail" .}}
 <script>
 (function(){
-  var urlMap = {
-    {{range .Providers}}'{{.Name}}':'{{.BaseURL}}',
+  var providerMap = {
+    {{range .Providers}}'{{.Name}}':{ baseURL: '{{.BaseURL}}', apiKey: '{{.APIKey}}' },
     {{end}}
   };
   document.addEventListener('change', function(e){
     if(e.target && e.target.id === 'cfg-provider'){
+      var p = providerMap[e.target.value] || { baseURL: '', apiKey: '' };
       var url = document.getElementById('cfg-base-url');
-      if(url) url.value = urlMap[e.target.value] || '';
+      if(url) url.value = p.baseURL || '';
+      var key = document.getElementById('cfg-api-key');
+      if(key && (!key.value || key.dataset.autoFilled === 'true')) {
+        key.value = p.apiKey || '';
+        key.dataset.autoFilled = p.apiKey ? 'true' : 'false';
+      }
     }
   });
 })();
@@ -123,10 +129,7 @@
         <input name="base_url" id="cfg-base-url" placeholder="auto selon le provider" value="{{if not .IsCreate}}{{.Editing.BaseURL}}{{end}}">
       </label>
       <label>API Key
-        <input name="api_key" type="password" placeholder="laisser vide pour Ollama local" value="{{if not .IsCreate}}{{.Editing.APIKey}}{{end}}">
-      </label>
-      <label>Cost Center (facturation)
-        <input name="cost_center" placeholder="ex : CC-ING" value="{{if not .IsCreate}}{{.Editing.CostCenter}}{{end}}" required>
+        <input name="api_key" id="cfg-api-key" type="password" placeholder="laisser vide pour cle provider ou Ollama" value="{{if not .IsCreate}}{{.Editing.APIKey}}{{end}}">
       </label>
     </div>
     <datalist id="cfg-models">
@@ -181,7 +184,7 @@
 {{define "configs_scoped_list"}}
 <div class="table-wrap">
   <table>
-    <thead><tr><th>Nom</th><th>Provider</th><th>Modele</th><th>Base URL</th><th>Cost Center</th><th>Statut</th><th>Actions</th></tr></thead>
+    <thead><tr><th>Nom</th><th>Provider</th><th>Modele</th><th>Base URL</th><th>Statut</th><th>Actions</th></tr></thead>
     <tbody>
     {{range .Configs}}
       <tr class="{{if .Active}}active{{end}}">
@@ -189,7 +192,6 @@
         <td>{{.Provider}}</td>
         <td>{{.Model}}</td>
         <td class="muted">{{.BaseURL}}</td>
-        <td>{{.CostCenter}}</td>
         <td>{{if .Active}}<span class="badge ok">Actif</span>{{else}}<span class="badge">Inactif</span>{{end}}</td>
         <td class="actions">
           {{if not .Active}}<button class="btn small" hx-post="/projects/{{$.Project.ID}}/configs/{{.ID}}/activate" hx-target="#project-configs-section" hx-swap="innerHTML">Activer</button>{{end}}
@@ -200,7 +202,7 @@
         </td>
       </tr>
     {{else}}
-      <tr><td colspan="7" class="muted center">Aucune configuration dans ce projet. Cliquez sur &laquo; Nouvelle configuration &raquo;.</td></tr>
+      <tr><td colspan="6" class="muted center">Aucune configuration dans ce projet. Cliquez sur &laquo; Nouvelle configuration &raquo;.</td></tr>
     {{end}}
     </tbody>
   </table>

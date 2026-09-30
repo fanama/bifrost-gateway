@@ -24,10 +24,13 @@
   <form hx-post="{{.Action}}" hx-target="#providers-list" hx-swap="innerHTML"
         hx-on::after-request="if(event.detail.successful){this.closest('dialog').close()}">
     <label>Nom
-      <input name="name" placeholder="ex : ollama, openai, azure, vertex" value="{{if .Editing}}{{.Editing.Name}}{{end}}" required>
+      <input name="name" placeholder="ex : google, openai, mistral, anthropic, ollama" value="{{if .Editing}}{{.Editing.Name}}{{end}}" required>
     </label>
     <label>Base URL par defaut
-      <input name="base_url" placeholder="ex : http://localhost:11434 (vide si non applicable)" value="{{if .Editing}}{{.Editing.BaseURL}}{{end}}">
+      <input name="base_url" placeholder="ex : https://api.mistral.ai/v1 (vide si valeur par défaut)" value="{{if .Editing}}{{.Editing.BaseURL}}{{end}}">
+    </label>
+    <label>Clé API par defaut
+      <input name="api_key" type="password" placeholder="ex : sk-... ou clé API du provider" value="{{if .Editing}}{{.Editing.APIKey}}{{end}}">
     </label>
     <div style="display:flex;gap:10px">
       <button class="btn" type="submit">{{if .Editing}}Enregistrer{{else}}Creer le provider{{end}}</button>
@@ -40,12 +43,13 @@
 {{define "provider_rows"}}
 <div class="table-wrap">
   <table>
-    <thead><tr><th>Nom</th><th>Base URL par defaut</th><th>Actions</th></tr></thead>
+    <thead><tr><th>Nom</th><th>Base URL par defaut</th><th>Clé API</th><th>Actions</th></tr></thead>
     <tbody>
     {{range .Providers}}
       <tr>
         <td><strong>{{.Name}}</strong></td>
-        <td class="muted">{{.BaseURL}}</td>
+        <td class="muted">{{if .BaseURL}}{{.BaseURL}}{{else}}-{{end}}</td>
+        <td>{{if .APIKey}}<code>{{.MaskedKey}}</code>{{else}}<span class="muted">Non définie</span>{{end}}</td>
         <td class="actions">
           <button class="btn small" hx-get="/providers/{{.ID}}/edit" hx-target="#provider-form-zone" hx-swap="outerHTML"
                   hx-on::after-request="document.getElementById('provider-form-zone').showModal()">Modifier</button>
@@ -53,7 +57,7 @@
         </td>
       </tr>
     {{else}}
-      <tr><td colspan="3" class="muted center">Aucun provider. Cliquez sur &laquo; Nouveau provider &raquo;.</td></tr>
+      <tr><td colspan="4" class="muted center">Aucun provider. Cliquez sur &laquo; Nouveau provider &raquo;.</td></tr>
     {{end}}
     </tbody>
   </table>

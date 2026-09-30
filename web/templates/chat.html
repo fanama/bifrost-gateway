@@ -2,51 +2,166 @@
 {{template "head" .}}
 <body hx-boost="true">
 {{template "nav" .}}
-<main id="main" class="page">
-  <div class="page-head"><h1>Discussion</h1></div>
-  <div id="chat-error"></div>
-  <div class="chat">
-    <form id="chat-form" class="chat-form card" hx-post="/chat/send" hx-target="#chat-messages" hx-swap="innerHTML">
-      <div class="row">
-        <select name="config_id" required>
-          <option value="" disabled>Choisir une configuration</option>
-          {{range .Configs}}<option value="{{.ID}}" {{if .Active}}selected{{end}}>{{.Name}} — {{.Model}} ({{.Provider}}){{if .Active}} ✓{{end}}</option>{{end}}
-        </select>
-        <input type="hidden" name="history" id="chat-history" value="">
-        <button class="btn" type="submit">Envoyer</button>
-      </div>
-      <label>Message
-        <textarea name="message" id="chat-message" placeholder="Votre message…" rows="3" required></textarea>
-      </label>
-    </form>
-    <div id="chat-messages" class="chat-messages">
-      {{template "chat_placeholder" .}}
+<main id="main" class="page-chat-container">
+  <div class="chat-topbar">
+    <div class="chat-topbar-left">
+      <label for="chat-config-select">Configuration :</label>
+      <select id="chat-config-select" name="config_id" form="chat-form" required>
+        <option value="" disabled {{if not .Configs}}selected{{end}}>Choisir une configuration</option>
+        {{range .Configs}}
+        <option value="{{.ID}}" {{if .Active}}selected{{end}}>{{.Name}} — {{.Model}} ({{.Provider}}){{if .Active}} ✓{{end}}</option>
+        {{end}}
+      </select>
+    </div>
+    <div class="actions">
+      <button class="btn ghost small" type="button" onclick="resetChat()">Nouvelle discussion</button>
     </div>
   </div>
-</main>
-{{template "tail" .}}
+
+  <div id="chat-error"></div>
+
+  <div class="chat-box">
+    <div id="chat-scroll-area" class="chat-messages-container">
+      <div id="chat-messages">
+        {{template "chat_placeholder" .}}
+      </div>
+      <div id="typing-indicator" class="typing-indicator">
+        <span class="typing-dot"></span>
+        <span class="typing-dot"></span>
+        <span class="typing-dot"></span>
+      </div>
+    </div>
+
+    <div class="chat-input-area">
+      <form id="chat-form" class="chat-input-form" hx-post="/chat/send" hx-target="#chat-messages" hx-swap="innerHTML" hx-indicator="#typing-indicator">
+        <input type="hidden" name="history" id="chat-history" value="">
+        <div class="chat-input-row">
+          <textarea
+            name="message"
+            id="chat-message"
+            class="chat-textarea"
+            placeholder="Posez votre question… (Entrée pour envoyer)"
+            rows="1"
+            required
+            oninput="autoResize(this)"
+            onkeydown="handleKey(event)"></textarea>
+          <button class="btn chat-send-btn" type="submit" id="chat-send-btn" title="Envoyer le message">
+            <svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+            <span>Envoyer</span>
+          </button>
+        </div>
+        <div class="chat-input-hint">
+          <span><strong>Entrée</strong> pour envoyer &bull; <strong>Maj + Entrée</strong> pour un saut de ligne</span>
+          <span id="char-count" class="muted"></span>
+        </div>
+      </form>
+    </div>
+  </div>
 <script>
-document.addEventListener('htmx:beforeRequest', function(evt){
+function autoResize(textarea) {
+  textarea.style.height = 'auto';
+  var newHeight = Math.min(textarea.scrollHeight, 160);
+  textarea.style.height = (newHeight > 24 ? newHeight : 24) + 'px';
+}
+
+function handleKey(evt) {
+  if (evt.key === 'Enter' && !evt.shiftKey) {
+    evt.preventDefault();
+    var form = document.getElementById('chat-form');
+    var msg = document.getElementById('chat-message').value.trim();
+    if (msg.length > 0) {
+      htmx.trigger(form, 'submit');
+    }
+  }
+}
+
+function scrollToBottom() {
+  var area = document.getElementById('chat-scroll-area');
+  if (area) {
+    area.scrollTop = area.scrollHeight;
+  }
+}
+
+function resetChat() {
+  var container = document.getElementById('chat-messages');
+  container.innerHTML = `{{template "chat_placeholder" .}}`;
+  document.getElementById('chat-history').value = '';
+  document.getElementById('chat-error').innerHTML = '';
+  var textarea = document.getElementById('chat-message');
+  textarea.value = '';
+  textarea.style.height = '24px';
+  textarea.focus();
+}
+
+document.addEventListener('htmx:beforeRequest', function(evt) {
   var el = evt.detail.elt;
-  if (el && el.id === 'chat-form'){
+  if (el && el.id === 'chat-form') {
     var items = [];
-    document.querySelectorAll('#chat-messages .chat-message').forEach(function(node){
-      items.push({role: node.dataset.role, content: node.dataset.content});
+    document.querySelectorAll('#chat-messages .chat-message').forEach(function(node) {
+      if (node.dataset.role && node.dataset.content) {
+        items.push({role: node.dataset.role, content: node.dataset.content});
+      }
     });
     document.getElementById('chat-history').value = JSON.stringify(items);
+
+    var textarea = document.getElementById('chat-message');
+    var userText = textarea.value.trim();
+    if (userText) {
+      // Nettoyer placeholder si présent
+      var emptyEl = document.querySelector('#chat-messages .chat-empty-state');
+      if (emptyEl) {
+        document.getElementById('chat-messages').innerHTML = '';
+      }
+
+      // Append optimiste du message utilisateur
+      var userMsgDiv = document.createElement('div');
+      userMsgDiv.className = 'chat-message user';
+      userMsgDiv.dataset.role = 'user';
+      userMsgDiv.dataset.content = userText;
+      userMsgDiv.innerHTML = `
+        <div class="chat-avatar">U</div>
+        <div class="chat-content-wrap">
+          <div class="chat-sender">Vous</div>
+          <div class="bubble"></div>
+        </div>
+      `;
+      userMsgDiv.querySelector('.bubble').textContent = userText;
+      document.getElementById('chat-messages').appendChild(userMsgDiv);
+
+      textarea.value = '';
+      textarea.style.height = '24px';
+      scrollToBottom();
+    }
+  }
+});
+
+document.addEventListener('htmx:afterSwap', function(evt) {
+  if (evt.detail.target && evt.detail.target.id === 'chat-messages') {
+    scrollToBottom();
+    var textarea = document.getElementById('chat-message');
+    if (textarea) textarea.focus();
   }
 });
 </script>
-</body>
-</html>
+{{template "tail" .}}
 {{end}}
 
-{{define "chat_placeholder"}}<div class="chat-empty">Aucun message. Choisissez une configuration, posez votre question et envoyez.</div>{{end}}
+{{define "chat_placeholder"}}
+<div class="chat-empty-state">
+  <div class="chat-empty-icon">&#128172;</div>
+  <div class="chat-empty-title">Discussion Interactive</div>
+  <div class="chat-empty-desc">Sélectionnez une configuration en haut puis tapez votre question ci-dessous pour démarrer l'échange.</div>
+</div>
+{{end}}
 
 {{define "chat_messages"}}
 {{range .Messages}}
 <div class="chat-message {{.Role}}" data-role="{{.Role}}" data-content="{{.Content}}">
-  <div class="bubble">{{.Content}}</div>
+  <div class="chat-avatar">{{if eq .Role "user"}}U{{else}}AI{{end}}</div>
+  <div class="chat-content-wrap">
+    <div class="chat-sender">{{if eq .Role "user"}}Vous{{else}}Assistant{{end}}</div>
+    <div class="bubble">{{.Content}}</div>
+  </div>
 </div>
 {{else}}
 {{template "chat_placeholder" .}}

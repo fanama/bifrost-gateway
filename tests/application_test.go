@@ -44,7 +44,7 @@ func TestConfigCreateRequiresRequiredFields(t *testing.T) {
 	if !errors.As(err, &verr) {
 		t.Fatalf("expected *ValidationError, got %T", err)
 	}
-	for _, want := range []string{"provider", "model", "cost_center"} {
+	for _, want := range []string{"provider", "model"} {
 		if !contains(verr.Fields, want) {
 			t.Errorf("expected field %s in %v", want, verr.Fields)
 		}
@@ -57,12 +57,11 @@ func TestConfigCRUDLifecycle(t *testing.T) {
 	ctx := context.Background()
 
 	created, err := uc.Create(ctx, &domain.ChatConfig{
-		Name:       "Ollama local",
-		ProjectID:  pid,
-		Provider:   "ollama",
-		Model:      "gemma4:e4b",
-		BaseURL:    "http://localhost:11434",
-		CostCenter: "CC-ING",
+		Name:      "Ollama local",
+		ProjectID: pid,
+		Provider:  "ollama",
+		Model:     "gemma4:e4b",
+		BaseURL:   "http://localhost:11434",
 	})
 	if err != nil {
 		t.Fatalf("create: %v", err)
@@ -80,10 +79,9 @@ func TestConfigCRUDLifecycle(t *testing.T) {
 	}
 
 	updated, err := uc.Update(ctx, created.ID, &domain.ChatConfig{
-		Name:       "Ollama R2",
-		Provider:   "Ollama",
-		Model:      "llama3",
-		CostCenter: "CC-ING",
+		Name:     "Ollama R2",
+		Provider: "Ollama",
+		Model:    "llama3",
 	})
 	if err != nil {
 		t.Fatalf("update: %v", err)
@@ -116,8 +114,8 @@ func TestConfigActiveExclusive(t *testing.T) {
 	uc := application.NewConfigUseCase(NewTestStore(t))
 	ctx := context.Background()
 
-	a, _ := uc.Create(ctx, &domain.ChatConfig{Name: "A", ProjectID: pid, Provider: "ollama", Model: "m1", CostCenter: "CC"})
-	b, _ := uc.Create(ctx, &domain.ChatConfig{Name: "B", ProjectID: pid, Provider: "openai", Model: "m2", CostCenter: "CC"})
+	a, _ := uc.Create(ctx, &domain.ChatConfig{Name: "A", ProjectID: pid, Provider: "ollama", Model: "m1"})
+	b, _ := uc.Create(ctx, &domain.ChatConfig{Name: "B", ProjectID: pid, Provider: "openai", Model: "m2"})
 
 	if _, err := uc.SetActive(ctx, pid, b.ID); err != nil {
 		t.Fatalf("set active B: %v", err)
@@ -158,7 +156,6 @@ func TestChatSendCallsLLMWithEnrichedMessages(t *testing.T) {
 		Name:         "Local",
 		Provider:     "ollama",
 		Model:        "gemma4:e4b",
-		CostCenter:   "CC-ING",
 		SystemPrompt: "You are helpful",
 	})
 
@@ -202,7 +199,6 @@ func TestConfigCreatesAndStoresGenerationParams(t *testing.T) {
 		Name:             "Local tuné",
 		Provider:         "ollama",
 		Model:            "gemma4:e4b",
-		CostCenter:       "CC-ING",
 		SystemPrompt:     "Sois concis",
 		Temperature:      &temp,
 		TopP:             &topP,
@@ -250,18 +246,18 @@ func TestConfigValidationRejectsOutOfRangeParams(t *testing.T) {
 	}{
 		{"temperature>2", func() *domain.ChatConfig {
 			v := 3.0
-			return &domain.ChatConfig{Name: "x", Provider: "ollama", Model: "m", CostCenter: "CC", Temperature: &v}
+			return &domain.ChatConfig{Name: "x", Provider: "ollama", Model: "m", Temperature: &v}
 		}, "temperature"},
 		{"top_p>1", func() *domain.ChatConfig {
 			v := 1.5
-			return &domain.ChatConfig{Name: "x", Provider: "ollama", Model: "m", CostCenter: "CC", TopP: &v}
+			return &domain.ChatConfig{Name: "x", Provider: "ollama", Model: "m", TopP: &v}
 		}, "top_p"},
 		{"max_tokens<1", func() *domain.ChatConfig {
 			v := 0
-			return &domain.ChatConfig{Name: "x", Provider: "ollama", Model: "m", CostCenter: "CC", MaxTokens: &v}
+			return &domain.ChatConfig{Name: "x", Provider: "ollama", Model: "m", MaxTokens: &v}
 		}, "max_tokens"},
 		{"bad_response_format", func() *domain.ChatConfig {
-			return &domain.ChatConfig{Name: "x", Provider: "ollama", Model: "m", CostCenter: "CC", ResponseFormat: "xml"}
+			return &domain.ChatConfig{Name: "x", Provider: "ollama", Model: "m", ResponseFormat: "xml"}
 		}, "response_format"},
 	}
 
@@ -288,7 +284,6 @@ func TestChatSendGivesConfigParamsToLLM(t *testing.T) {
 		Name:        "Froid",
 		Provider:    "openai",
 		Model:       "gpt-4o",
-		CostCenter:  "CC-ING",
 		Temperature: &temp,
 		MaxTokens:   &maxTokens,
 	})
@@ -320,7 +315,6 @@ func TestChatSendUsesSystemPromptAndFullParamsFromConfig(t *testing.T) {
 		Name:             "Drum",
 		Provider:         "ollama",
 		Model:            "gemma4:e4b",
-		CostCenter:       "CC-ING",
 		SystemPrompt:     "Tu t'appelles Drum et tu cites le chiffre 42.",
 		Temperature:      &temp,
 		TopP:             &topP,
@@ -371,10 +365,9 @@ func TestChatSendUsesSystemPromptAndFullParamsFromConfig(t *testing.T) {
 func TestChatSendUnknownConfigReturnsNotFound(t *testing.T) {
 	store := NewTestStore(t)
 	application.NewConfigUseCase(store).Create(context.Background(), &domain.ChatConfig{
-		Name:       "Local",
-		Provider:   "ollama",
-		Model:      "gemma4:e4b",
-		CostCenter: "CC-ING",
+		Name:     "Local",
+		Provider: "ollama",
+		Model:    "gemma4:e4b",
 	})
 
 	_, err := application.NewChatUseCase(
@@ -388,10 +381,9 @@ func TestChatSendUnknownConfigReturnsNotFound(t *testing.T) {
 func TestChatSendRejectsEmptyMessage(t *testing.T) {
 	store := NewTestStore(t)
 	cfg, _ := application.NewConfigUseCase(store).Create(context.Background(), &domain.ChatConfig{
-		Name:       "Local",
-		Provider:   "ollama",
-		Model:      "gemma4:e4b",
-		CostCenter: "CC-ING",
+		Name:     "Local",
+		Provider: "ollama",
+		Model:    "gemma4:e4b",
 	})
 
 	_, err := application.NewChatUseCase(
@@ -409,10 +401,9 @@ func TestChatSendRejectsEmptyMessage(t *testing.T) {
 func TestChatSendTrimsOversizedHistory(t *testing.T) {
 	store := NewTestStore(t)
 	cfg, _ := application.NewConfigUseCase(store).Create(context.Background(), &domain.ChatConfig{
-		Name:       "Local",
-		Provider:   "ollama",
-		Model:      "gemma4:e4b",
-		CostCenter: "CC-ING",
+		Name:     "Local",
+		Provider: "ollama",
+		Model:    "gemma4:e4b",
 	})
 
 	fake := &fakeLLM{reply: "ok"}
@@ -440,10 +431,10 @@ func TestModelUseCaseMergesGatewayAndConfigModels(t *testing.T) {
 
 	configUC := application.NewConfigUseCase(store)
 	_, _ = configUC.Create(context.Background(), &domain.ChatConfig{
-		Name: "Local", Provider: "ollama", Model: "gemma4:e4b", CostCenter: "CC",
+		Name: "Local", Provider: "ollama", Model: "gemma4:e4b",
 	})
 	_, _ = configUC.Create(context.Background(), &domain.ChatConfig{
-		Name: "API", Provider: "openai", Model: "gpt-4o", CostCenter: "CC",
+		Name: "API", Provider: "openai", Model: "gpt-4o",
 	})
 
 	models, err := uc.List(context.Background())

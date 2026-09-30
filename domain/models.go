@@ -1,14 +1,12 @@
 package domain
 
 type AttributionMetadata struct {
-	CostCenter     string         `json:"cost_center"`
 	SystemPrompt   string         `json:"system_prompt,omitempty"`
 	DefaultModel   string         `json:"default_model,omitempty"`
 	ResponseFormat map[string]any `json:"response_format,omitempty"`
 }
 
 type TeamMetadata struct {
-	CostCenter     string         `json:"cost_center,omitempty"`
 	SystemPrompt   string         `json:"system_prompt,omitempty"`
 	DefaultModel   string         `json:"default_model,omitempty"`
 	ResponseFormat map[string]any `json:"response_format,omitempty"`
@@ -23,16 +21,12 @@ func (m *RequestMetadata) resolve() AttributionMetadata {
 	merged := TeamMetadata{}
 
 	if m != nil && m.TeamMetadata != nil {
-		merged.CostCenter = m.TeamMetadata.CostCenter
 		merged.SystemPrompt = m.TeamMetadata.SystemPrompt
 		merged.DefaultModel = m.TeamMetadata.DefaultModel
 		merged.ResponseFormat = m.TeamMetadata.ResponseFormat
 	}
 
 	if m != nil && m.AuthMetadata != nil {
-		if m.AuthMetadata.CostCenter != "" {
-			merged.CostCenter = m.AuthMetadata.CostCenter
-		}
 		if m.AuthMetadata.SystemPrompt != "" {
 			merged.SystemPrompt = m.AuthMetadata.SystemPrompt
 		}
@@ -45,7 +39,6 @@ func (m *RequestMetadata) resolve() AttributionMetadata {
 	}
 
 	return AttributionMetadata{
-		CostCenter:     merged.CostCenter,
 		SystemPrompt:   merged.SystemPrompt,
 		DefaultModel:   merged.DefaultModel,
 		ResponseFormat: merged.ResponseFormat,

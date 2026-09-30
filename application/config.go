@@ -66,7 +66,6 @@ func (u *ConfigUseCase) Update(ctx context.Context, id string, patch *domain.Cha
 	existing.BaseURL = strings.TrimSpace(patch.BaseURL)
 	existing.APIKey = strings.TrimSpace(patch.APIKey)
 	existing.SystemPrompt = patch.SystemPrompt
-	existing.CostCenter = strings.TrimSpace(patch.CostCenter)
 	existing.Temperature = patch.Temperature
 	existing.TopP = patch.TopP
 	existing.MaxTokens = patch.MaxTokens

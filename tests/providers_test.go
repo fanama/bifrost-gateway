@@ -61,19 +61,22 @@ func TestProviderUseCaseCRUD(t *testing.T) {
 	uc := application.NewProviderUseCase(newProviderStore(t, nil))
 	ctx := context.Background()
 
-	created, err := uc.Create(ctx, " mistral ", "https://api.mistral.ai/v1")
+	created, err := uc.Create(ctx, " mistral ", "https://api.mistral.ai/v1", "sk-mistral-secret-123456")
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if created.Name != "mistral" || created.BaseURL != "https://api.mistral.ai/v1" || created.ID == "" {
+	if created.Name != "mistral" || created.BaseURL != "https://api.mistral.ai/v1" || created.APIKey != "sk-mistral-secret-123456" || created.ID == "" {
 		t.Fatalf("unexpected provider: %#v", created)
 	}
+	if created.MaskedKey() != "sk-m••••3456" {
+		t.Errorf("unexpected masked key: %s", created.MaskedKey())
+	}
 
-	updated, err := uc.Update(ctx, created.ID, "mistral-new", "")
+	updated, err := uc.Update(ctx, created.ID, "mistral-new", "", "sk-new-key")
 	if err != nil {
 		t.Fatalf("update: %v", err)
 	}
-	if updated.Name != "mistral-new" || updated.BaseURL != "" {
+	if updated.Name != "mistral-new" || updated.BaseURL != "" || updated.APIKey != "sk-new-key" {
 		t.Fatalf("unexpected update: %#v", updated)
 	}
 
@@ -92,7 +95,7 @@ func TestProviderUseCaseCRUD(t *testing.T) {
 
 func TestProviderUseCaseRequiresName(t *testing.T) {
 	uc := application.NewProviderUseCase(newProviderStore(t, nil))
-	_, err := uc.Create(context.Background(), "   ", "")
+	_, err := uc.Create(context.Background(), "   ", "", "")
 	if err == nil {
 		t.Fatal("expected validation error")
 	}

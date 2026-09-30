@@ -49,7 +49,6 @@ func (u *ChatUseCase) Send(
 		Messages: messages,
 		Metadata: &domain.RequestMetadata{
 			TeamMetadata: &domain.TeamMetadata{
-				CostCenter:   cfg.CostCenter,
 				SystemPrompt: cfg.SystemPrompt,
 				DefaultModel: cfg.Model,
 			},

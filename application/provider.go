@@ -15,10 +15,11 @@ func NewProviderUseCase(providers domain.ProviderRepository) *ProviderUseCase {
 	return &ProviderUseCase{EntityUseCase: NewEntityUseCase[domain.Provider, domain.ProviderRepository](providers)}
 }
 
-func (u *ProviderUseCase) Create(ctx context.Context, name, baseURL string) (*domain.Provider, error) {
+func (u *ProviderUseCase) Create(ctx context.Context, name, baseURL, apiKey string) (*domain.Provider, error) {
 	p := &domain.Provider{
 		Name:    strings.TrimSpace(name),
 		BaseURL: strings.TrimSpace(baseURL),
+		APIKey:  strings.TrimSpace(apiKey),
 	}
 	if err := p.Validate(); err != nil {
 		return nil, err
@@ -32,13 +33,14 @@ func (u *ProviderUseCase) Create(ctx context.Context, name, baseURL string) (*do
 	return p, nil
 }
 
-func (u *ProviderUseCase) Update(ctx context.Context, id string, name, baseURL string) (*domain.Provider, error) {
+func (u *ProviderUseCase) Update(ctx context.Context, id string, name, baseURL, apiKey string) (*domain.Provider, error) {
 	current, err := u.repo.Get(ctx, id)
 	if err != nil {
 		return nil, err
 	}
 	current.Name = strings.TrimSpace(name)
 	current.BaseURL = strings.TrimSpace(baseURL)
+	current.APIKey = strings.TrimSpace(apiKey)
 	if err := current.Validate(); err != nil {
 		return nil, err
 	}
