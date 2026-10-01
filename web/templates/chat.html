@@ -93,6 +93,50 @@ function resetChat() {
   textarea.focus();
 }
 
+function copyCurlSnippet(button) {
+  var snippet = document.getElementById('curl-snippet');
+  if (!snippet) {
+    return;
+  }
+  var original = button.textContent;
+  var done = function() {
+    button.textContent = 'Copié !';
+    button.disabled = true;
+    setTimeout(function() {
+      button.textContent = original;
+      button.disabled = false;
+    }, 1600);
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(snippet.textContent).then(done, function() { fallbackCopy(snippet, done); });
+  } else {
+    fallbackCopy(snippet, done);
+  }
+}
+
+// Repli pour les contextes non securises (http sans localhost), ou navigator
+//.clipboard est indisponible.
+function fallbackCopy(snippet, done) {
+  var range = document.createRange();
+  range.selectNodeContents(snippet);
+  var selection = window.getSelection();
+  selection.removeAllRanges();
+  selection.addRange(range);
+  var ok = false;
+  try {
+    ok = document.execCommand('copy');
+  } catch (e) {
+    ok = false;
+  }
+  if (ok) {
+    done();
+  } else {
+    alert('Sélectionnez le bloc ci-dessus et copiez-le manuellement (Ctrl+C).');
+  }
+}
+
+
+
 document.addEventListener('htmx:beforeRequest', function(evt) {
   var el = evt.detail.elt;
   if (el && el.id === 'chat-form') {
@@ -151,6 +195,31 @@ document.addEventListener('htmx:afterSwap', function(evt) {
   <div class="chat-empty-icon">&#128172;</div>
   <div class="chat-empty-title">Discussion Interactive</div>
   <div class="chat-empty-desc">Sélectionnez une configuration en haut puis tapez votre question ci-dessous pour démarrer l'échange.</div>
+
+  <details class="curl-example">
+    <summary>Appeler cette API en curl</summary>
+    <p class="curl-example-desc">
+      Le modèle est celui de la <strong>configuration active du projet</strong>
+      (<span class="curl-example-model">{{.DefaultModel}}</span>) : inutile de le préciser dans le corps de la
+      requête. Seuls <code>messages</code> est requis.
+    </p>
+    <div class="curl-example-row">
+      <pre class="curl-example-code"><code id="curl-snippet">curl -X POST <span id="curl-base">{{.BaseURL}}/v1/chat/completions</span> \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer sk-bridge-VOTRE_CLE' \
+  -d '{
+    "messages": [
+      {"role": "user", "content": "Bonjour"}
+    ]
+  }'</code></pre>
+      <button class="btn small" type="button"
+              onclick="copyCurlSnippet(this)">Copier</button>
+    </div>
+    <p class="curl-example-hint">
+      Pour changer de modèle, activez une autre configuration depuis la page du projet — un <code>model</code> dans le
+      corps est ignoré. La réponse est au format OpenAI : lire <code>choices[0].message.content</code>.
+    </p>
+  </details>
 </div>
 {{end}}
 

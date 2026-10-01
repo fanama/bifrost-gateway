@@ -10,22 +10,14 @@ import (
 	"bridge-gateway/infrastructure"
 )
 
-func newProjectStore(t *testing.T) *infrastructure.FileProjectStore {
+func newProjectStore(t *testing.T) *infrastructure.ProjectStore {
 	t.Helper()
-	s, err := infrastructure.NewFileProjectStore(t.TempDir() + "/projects.json")
-	if err != nil {
-		t.Fatalf("new project store: %v", err)
-	}
-	return s
+	return infrastructure.NewProjectStore(newTestDB(t))
 }
 
-func newKeyStore(t *testing.T) *infrastructure.FileAPIKeyStore {
+func newKeyStore(t *testing.T) *infrastructure.APIKeyStore {
 	t.Helper()
-	s, err := infrastructure.NewFileAPIKeyStore(t.TempDir() + "/apikeys.json")
-	if err != nil {
-		t.Fatalf("new key store: %v", err)
-	}
-	return s
+	return infrastructure.NewAPIKeyStore(newTestDB(t))
 }
 
 func TestProjectCreateListGetDelete(t *testing.T) {

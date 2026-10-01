@@ -1,21 +1,20 @@
 package infrastructure
 
 import (
+	"database/sql"
 	"errors"
 
 	"bridge-gateway/domain"
 )
 
-type FileProjectStore struct {
+// ProjectStore implemente domain.ProjectRepository sur SQLite.
+type ProjectStore struct {
 	*Adapter[domain.Project]
 }
 
-func NewFileProjectStore(path string) (*FileProjectStore, error) {
-	inner, err := NewJSONStore[domain.Project](path)
-	if err != nil {
-		return nil, err
-	}
-	return &FileProjectStore{Adapter: NewAdapter(
+func NewProjectStore(db *sql.DB) *ProjectStore {
+	inner := NewSQLStore[domain.Project](db, TableProjects, func(p *domain.Project) string { return p.ID })
+	return &ProjectStore{Adapter: NewAdapter(
 		inner,
 		func(p *domain.Project) string { return p.ID },
 		domain.ErrProjectNotFound,
@@ -27,7 +26,7 @@ func NewFileProjectStore(path string) (*FileProjectStore, error) {
 			}
 			return nil
 		},
-	)}, nil
+	)}
 }
 
-var _ domain.ProjectRepository = (*FileProjectStore)(nil)
+var _ domain.ProjectRepository = (*ProjectStore)(nil)

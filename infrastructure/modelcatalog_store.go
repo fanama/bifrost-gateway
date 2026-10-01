@@ -1,30 +1,38 @@
 package infrastructure
 
 import (
+	"context"
+	"database/sql"
+
 	"bridge-gateway/domain"
 )
 
-type FileModelCatalogStore struct {
+// ModelCatalogStore implemente domain.ModelCatalogRepository sur SQLite.
+type ModelCatalogStore struct {
 	*Adapter[domain.CatalogModel]
 }
 
-func NewFileModelCatalogStore(path string, seeds []domain.CatalogModel) (*FileModelCatalogStore, error) {
+func NewModelCatalogStore(db *sql.DB, seeds []domain.CatalogModel) (*ModelCatalogStore, error) {
 	if seeds == nil {
 		seeds = []domain.CatalogModel{}
 	}
-	inner, err := NewJSONStore[domain.CatalogModel](path)
-	if err != nil {
-		return nil, err
-	}
-	if err := inner.Seed(func() []domain.CatalogModel { return seeds }); err != nil {
-		return nil, err
-	}
-	return &FileModelCatalogStore{Adapter: NewAdapter(
+	inner := NewSQLStore[domain.CatalogModel](db, TableCatalogModel, func(m *domain.CatalogModel) string { return m.ID })
+	store := &ModelCatalogStore{Adapter: NewAdapter(
 		inner,
 		func(m *domain.CatalogModel) string { return m.ID },
 		domain.ErrCatalogModelNotFound,
 		nil,
-	)}, nil
+	)}
+	if err := inner.Seed(context.Background(), func() []domain.CatalogModel { return seeds }); err != nil {
+		return nil, err
+	}
+	return store, nil
 }
 
-var _ domain.ModelCatalogRepository = (*FileModelCatalogStore)(nil)
+// ListByProvider alimente la route /projects/{id}/configs/models, qui rend le
+// datalist filtre par provider pour le champ modele de la modale.
+func (s *ModelCatalogStore) ListByProvider(ctx context.Context, provider string) ([]domain.CatalogModel, error) {
+	return s.Store().WhereSQL(ctx, `json_extract(payload, '$.provider') = ?`, provider)
+}
+
+var _ domain.ModelCatalogRepository = (*ModelCatalogStore)(nil)

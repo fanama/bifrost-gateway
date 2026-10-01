@@ -27,7 +27,7 @@
       <input name="name" placeholder="ex : google, openai, mistral, anthropic, ollama" value="{{if .Editing}}{{.Editing.Name}}{{end}}" required>
     </label>
     <label>Base URL par defaut
-      <input name="base_url" placeholder="ex : https://api.mistral.ai/v1 (vide si valeur par défaut)" value="{{if .Editing}}{{.Editing.BaseURL}}{{end}}">
+      <input name="base_url" placeholder="ex : https://api.mistral.ai (sans /v1, ajoute par la passerelle)" value="{{if .Editing}}{{.Editing.BaseURL}}{{end}}">
     </label>
     <label>Clé API par defaut
       <input name="api_key" type="password" placeholder="ex : sk-... ou clé API du provider" value="{{if .Editing}}{{.Editing.APIKey}}{{end}}">

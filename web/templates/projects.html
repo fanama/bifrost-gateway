@@ -104,6 +104,10 @@
 {{template "configs_scoped_list" .}}
 {{end}}
 
+{{define "config_model_hints"}}
+{{range .}}<option value="{{.}}"></option>
+{{end}}{{end}}
+
 {{define "config_form"}}
 <dialog id="config-form-zone" class="card">
   <h3 style="margin-top:0">{{if .IsCreate}}Nouvelle configuration{{else}}Modifier : {{.Editing.Name}}{{end}}</h3>
@@ -115,7 +119,10 @@
         <input name="name" placeholder="ex : Ollama local" value="{{if not .IsCreate}}{{.Editing.Name}}{{end}}" required>
       </label>
       <label>Provider
-        <select id="cfg-provider" name="provider" required>
+        <select id="cfg-provider" name="provider" required
+                hx-get="/projects/{{.ProjectID}}/configs/models"
+                hx-trigger="change"
+                hx-target="#cfg-models" hx-swap="outerHTML">
           <option value="" disabled {{if .IsCreate}}selected{{end}}>— choisir —</option>
           {{range .Providers}}
           <option value="{{.}}" {{if eq $.SelectedProvider .}}selected{{end}}>{{.}}</option>
@@ -126,14 +133,14 @@
         <input name="model" list="cfg-models" placeholder="ex : gemma4:e4b" value="{{if not .IsCreate}}{{.Editing.Model}}{{end}}" required>
       </label>
       <label>Base URL
-        <input name="base_url" id="cfg-base-url" placeholder="auto selon le provider" value="{{if not .IsCreate}}{{.Editing.BaseURL}}{{end}}">
+        <input name="base_url" id="cfg-base-url" placeholder="auto selon le provider (ex : https://api.mistral.ai)" value="{{if not .IsCreate}}{{.Editing.BaseURL}}{{end}}">
       </label>
       <label>API Key
         <input name="api_key" id="cfg-api-key" type="password" placeholder="laisser vide pour cle provider ou Ollama" value="{{if not .IsCreate}}{{.Editing.APIKey}}{{end}}">
       </label>
     </div>
     <datalist id="cfg-models">
-      {{range .ModelHints}}<option value="{{.}}">{{end}}
+      {{template "config_model_hints" .ModelHints}}
     </datalist>
 
     <details class="gen-params" {{if not .IsCreate}}open{{end}}>

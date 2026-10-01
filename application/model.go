@@ -71,3 +71,27 @@ func (u *ModelUseCase) List(ctx context.Context) ([]domain.ModelInfo, error) {
 
 	return models, nil
 }
+
+// ListForProvider returns the models known for a single provider, i.e. the same
+// merged list as List restricted to that provider. An empty provider returns
+// every model. Matching is case-insensitive because providers are stored
+// free-form in the configurations while the catalogue lowercases them.
+func (u *ModelUseCase) ListForProvider(ctx context.Context, provider string) ([]domain.ModelInfo, error) {
+	models, err := u.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	provider = strings.TrimSpace(provider)
+	if provider == "" {
+		return models, nil
+	}
+
+	filtered := make([]domain.ModelInfo, 0, len(models))
+	for _, m := range models {
+		if strings.EqualFold(m.Provider, provider) {
+			filtered = append(filtered, m)
+		}
+	}
+	return filtered, nil
+}

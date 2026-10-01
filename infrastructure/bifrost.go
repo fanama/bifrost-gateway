@@ -2,7 +2,9 @@ package infrastructure
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strings"
 
 	bifrost "github.com/maximhq/bifrost/core"
 	"github.com/maximhq/bifrost/core/schemas"
@@ -41,11 +43,60 @@ func (c *BifrostClient) ChatCompletion(
 		req,
 	)
 	if bifrostErr != nil {
-		msg := "unknown error"
-		if bifrostErr.Error != nil && bifrostErr.Error.Message != "" {
-			msg = bifrostErr.Error.Message
-		}
-		return nil, fmt.Errorf("bifrost error: %s", msg)
+		return nil, formatBifrostError(bifrostErr)
 	}
 	return resp, nil
+}
+
+// formatBifrostError renders a BifrostError into something actionable. The SDK
+// collapses a whole class of failures into a generic message ("HTML response
+// received from provider"), so the HTTP status and a short excerpt of the body
+// are kept to make misconfigured base URLs diagnosable from the UI.
+func formatBifrostError(bifrostErr *schemas.BifrostError) error {
+	msg := "unknown error"
+	if bifrostErr.Error != nil && bifrostErr.Error.Message != "" {
+		msg = bifrostErr.Error.Message
+	}
+
+	var detail string
+	if bifrostErr.Error != nil && bifrostErr.Error.Error != nil {
+		detail = strings.TrimSpace(bifrostErr.Error.Error.Error())
+	}
+	if detail == "" {
+		detail = rawResponseExcerpt(bifrostErr.ExtraFields.RawResponse)
+	}
+	if detail = excerpt(detail, 200); detail != "" {
+		return fmt.Errorf("bifrost error: %s: %s", msg, detail)
+	}
+	if bifrostErr.StatusCode != nil && *bifrostErr.StatusCode != 0 {
+		return fmt.Errorf("bifrost error: %s (HTTP %d)", msg, *bifrostErr.StatusCode)
+	}
+	return fmt.Errorf("bifrost error: %s", msg)
+}
+
+func rawResponseExcerpt(raw any) string {
+	switch v := raw.(type) {
+	case nil:
+		return ""
+	case string:
+		return v
+	case []byte:
+		return string(v)
+	default:
+		encoded, err := json.Marshal(v)
+		if err != nil {
+			return ""
+		}
+		return string(encoded)
+	}
+}
+
+// excerpt collapses whitespace and truncates s so a provider error page does not
+// flood the UI toast.
+func excerpt(s string, max int) string {
+	collapsed := strings.Join(strings.Fields(s), " ")
+	if max <= 0 || len(collapsed) <= max {
+		return collapsed
+	}
+	return collapsed[:max] + "..."
 }

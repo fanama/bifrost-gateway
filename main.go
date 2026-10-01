@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -26,7 +25,8 @@ const generalProjectID = "project-general"
 func main() {
 	configPath := flag.String("config", "config.yaml", "path to config file")
 	port := flag.Int("port", 8080, "server port")
-	storePath := flag.String("store", "data/configs.json", "path to configurations store")
+	dbPath := flag.String("db", "data/bridge.db", "path to the SQLite database file")
+	legacyDir := flag.String("import-json", "data", "directory holding legacy JSON stores to migrate on first start (empty to skip)")
 	flag.Parse()
 
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
@@ -37,37 +37,80 @@ func main() {
 		log.Fatalf("Failed to load config: %v", err)
 	}
 
-	storeDir := filepath.Dir(*storePath)
+	ctx := context.Background()
 
-	configStore, err := infrastructure.NewFileConfigStore(*storePath)
+	db, err := infrastructure.OpenDB(*dbPath)
 	if err != nil {
-		log.Fatalf("Failed to init config store: %v", err)
+		log.Fatalf("Failed to open database %s: %v", *dbPath, err)
 	}
-	projectStore, err := infrastructure.NewFileProjectStore(filepath.Join(storeDir, "projects.json"))
-	if err != nil {
-		log.Fatalf("Failed to init project store: %v", err)
+	defer db.Close()
+
+	if err := infrastructure.Migrate(ctx, db); err != nil {
+		log.Fatalf("Failed to migrate schema: %v", err)
 	}
-	keyStore, err := infrastructure.NewFileAPIKeyStore(filepath.Join(storeDir, "apikeys.json"))
-	if err != nil {
-		log.Fatalf("Failed to init api key store: %v", err)
+
+	if *legacyDir != "" {
+		counts, err := infrastructure.ImportLegacyStoreData(ctx, db, *legacyDir)
+		if err != nil {
+			log.Fatalf("Failed to import legacy JSON stores: %v", err)
+		}
+		for name, n := range counts {
+			log.Printf("Imported %d record(s) from %s.json into SQLite", n, name)
+		}
 	}
-	providerStore, err := infrastructure.NewFileProviderStore(filepath.Join(storeDir, "providers.json"), defaultProviders())
+
+	configStore := infrastructure.NewChatConfigStore(db)
+	projectStore := infrastructure.NewProjectStore(db)
+	keyStore := infrastructure.NewAPIKeyStore(db)
+	providerStore, err := infrastructure.NewProviderStore(db, defaultProviders())
 	if err != nil {
 		log.Fatalf("Failed to init provider store: %v", err)
 	}
-	catalogStore, err := infrastructure.NewFileModelCatalogStore(filepath.Join(storeDir, "models.json"), catalogModels(cfg))
+	catalogStore, err := infrastructure.NewModelCatalogStore(db, catalogModels(cfg))
 	if err != nil {
 		log.Fatalf("Failed to init model catalog store: %v", err)
 	}
 
+	// Cache local en memoire (remplace Redis).
+	//
+	//   - cache des lectures de repositories, TTL court (15s) pour que les
+	//     modifications faites depuis l'UI soient visibles presque immediatement ;
+	//   - cache des reponses LLM, TTL long (5 min) car un hit evite un appel
+	//     reseau au provider.
+	//
+	// Chaque decorateur est omis si sa section est desactivee dans config.yaml,
+	// ce qui laisse les calls traverser directement SQLite.
+	var uiConfigStore domain.ChatConfigRepository = configStore
+	var uiProjectStore domain.ProjectRepository = projectStore
+	var uiKeyStore domain.APIKeyRepository = keyStore
+
+	storeCache, llmCache := configureCaches(cfg)
+
+	if cfg.Cache.Stores.Enabled {
+		defer storeCache.Stop()
+		uiConfigStore = infrastructure.NewCachedConfigStore(configStore, storeCache, cfg.Cache.Stores.CacheTTL(15*time.Second))
+		uiProjectStore = infrastructure.NewCachedProjectStore(projectStore, storeCache, cfg.Cache.Stores.CacheTTL(15*time.Second))
+		uiKeyStore = infrastructure.NewCachedAPIKeyStore(keyStore, storeCache, cfg.Cache.Stores.CacheTTL(15*time.Second))
+	}
+	if cfg.Cache.LLMResponse.Enabled {
+		defer llmCache.Stop()
+	}
+
 	migrateOrphanConfigs(configStore, projectStore)
 
-	llmProvider := infrastructure.NewBifrostLLMProvider(providerStore)
+	bifrostProvider := infrastructure.NewBifrostLLMProvider(providerStore)
+
+	// Le chat doit voir l'etat le plus frais possible des configs, donc recoit
+	// le store non decoré ; seul l'appel provider est mis en cache.
+	var llmProvider domain.LLMProvider = bifrostProvider
+	if cfg.Cache.LLMResponse.Enabled {
+		llmProvider = infrastructure.NewCachedLLMProvider(bifrostProvider, llmCache, cfg.Cache.LLMResponse.CacheTTL(5*time.Minute))
+	}
 
 	enrichmentService := domain.NewEnrichmentService()
-	projectUseCase := application.NewProjectUseCase(projectStore)
-	keyUseCase := application.NewAPIKeyUseCase(keyStore, projectStore)
-	authUseCase := application.NewAuthUseCase(os.Getenv("BIFROST_MASTER_KEY"), keyStore, projectStore)
+	projectUseCase := application.NewProjectUseCase(uiProjectStore)
+	keyUseCase := application.NewAPIKeyUseCase(uiKeyStore, uiProjectStore)
+	authUseCase := application.NewAuthUseCase(os.Getenv("BIFROST_MASTER_KEY"), uiKeyStore, uiProjectStore)
 	chatHandler := handlers.NewChatHandler(
 		enrichmentService,
 		authUseCase,
@@ -75,9 +118,9 @@ func main() {
 		application.NewConfigUseCase(configStore),
 	)
 
-	configUseCase := application.NewConfigUseCase(configStore)
+	configUseCase := application.NewConfigUseCase(uiConfigStore)
 	chatUseCase := application.NewChatUseCase(configStore, enrichmentService, llmProvider)
-	modelUseCase := application.NewModelUseCase(gatewayModels(cfg), configStore, catalogStore)
+	modelUseCase := application.NewModelUseCase(gatewayModels(cfg), uiConfigStore, catalogStore)
 	providerUseCase := application.NewProviderUseCase(providerStore)
 	catalogUseCase := application.NewModelCatalogUseCase(catalogStore)
 
@@ -125,7 +168,7 @@ func main() {
 
 // migrateOrphanConfigs cree le projet "General" au demarrage et rattache
 // les configurations existantes qui n'appartiennent encore a aucun projet.
-func migrateOrphanConfigs(configStore *infrastructure.FileConfigStore, projectStore *infrastructure.FileProjectStore) {
+func migrateOrphanConfigs(configStore *infrastructure.ChatConfigStore, projectStore *infrastructure.ProjectStore) {
 	ctx := context.Background()
 	projectsUC := application.NewProjectUseCase(projectStore)
 
@@ -173,11 +216,11 @@ func defaultProviders() []domain.Provider {
 	now := time.Now().UTC()
 	return []domain.Provider{
 		{ID: "prov-ollama", Name: "ollama", BaseURL: ollamaBaseURL(), CreatedAt: now, UpdatedAt: now},
-		{ID: "prov-openai", Name: "openai", BaseURL: "https://api.openai.com/v1", CreatedAt: now, UpdatedAt: now},
-		{ID: "prov-mistral", Name: "mistral", BaseURL: "https://api.mistral.ai/v1", CreatedAt: now, UpdatedAt: now},
+		{ID: "prov-openai", Name: "openai", BaseURL: "https://api.openai.com", CreatedAt: now, UpdatedAt: now},
+		{ID: "prov-mistral", Name: "mistral", BaseURL: "https://api.mistral.ai", CreatedAt: now, UpdatedAt: now},
 		{ID: "prov-google", Name: "google", BaseURL: "", CreatedAt: now, UpdatedAt: now},
-		{ID: "prov-anthropic", Name: "anthropic", BaseURL: "https://api.anthropic.com/v1", CreatedAt: now, UpdatedAt: now},
-		{ID: "prov-groq", Name: "groq", BaseURL: "https://api.groq.com/openai/v1", CreatedAt: now, UpdatedAt: now},
+		{ID: "prov-anthropic", Name: "anthropic", BaseURL: "https://api.anthropic.com", CreatedAt: now, UpdatedAt: now},
+		{ID: "prov-groq", Name: "groq", BaseURL: "https://api.groq.com/openai", CreatedAt: now, UpdatedAt: now},
 		{ID: "prov-vertex", Name: "vertex", BaseURL: "", CreatedAt: now, UpdatedAt: now},
 		{ID: "prov-azure", Name: "azure", BaseURL: "", CreatedAt: now, UpdatedAt: now},
 	}
@@ -211,6 +254,21 @@ func gatewayModels(cfg *infrastructure.GatewayConfig) []domain.ModelInfo {
 		})
 	}
 	return models
+}
+
+// configureCaches instancie les deux caches en memoire. Ils sont toujours
+// crees (et arretes a la fermeture) pour que le balayage des entrees expirees
+// demarre, mais un decorateur n'est installe que si sa section est activee.
+func configureCaches(cfg *infrastructure.GatewayConfig) (stores, llm *infrastructure.MemoryCache) {
+	stores = infrastructure.NewMemoryCache(infrastructure.MemoryCacheOptions{
+		MaxEntries:    cfg.Cache.Stores.MaxEntries,
+		SweepInterval: time.Minute,
+	})
+	llm = infrastructure.NewMemoryCache(infrastructure.MemoryCacheOptions{
+		MaxEntries:    cfg.Cache.LLMResponse.MaxEntries,
+		SweepInterval: time.Minute,
+	})
+	return stores, llm
 }
 
 func loggingMiddleware(next http.Handler) http.Handler {

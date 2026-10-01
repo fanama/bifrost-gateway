@@ -2,8 +2,10 @@ package tests
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"testing"
 
 	"bridge-gateway/application"
@@ -11,21 +13,28 @@ import (
 	"bridge-gateway/infrastructure"
 )
 
-func NewTestStore(t *testing.T) *infrastructure.FileConfigStore {
+// newTestDB cree une base SQLite isolee par test (repertoire temporaire).
+func newTestDB(t *testing.T) *sql.DB {
 	t.Helper()
-	store, err := infrastructure.NewFileConfigStore(t.TempDir() + "/configs.json")
+	db, err := infrastructure.OpenDB(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
-		t.Fatalf("new store: %v", err)
+		t.Fatalf("open db: %v", err)
 	}
-	return store
+	if err := infrastructure.Migrate(context.Background(), db); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	return db
+}
+
+func NewTestStore(t *testing.T) *infrastructure.ChatConfigStore {
+	t.Helper()
+	return infrastructure.NewChatConfigStore(newTestDB(t))
 }
 
 func NewTestProject(t *testing.T) string {
 	t.Helper()
-	store, err := infrastructure.NewFileProjectStore(t.TempDir() + "/projects.json")
-	if err != nil {
-		t.Fatalf("new project store: %v", err)
-	}
+	store := infrastructure.NewProjectStore(newTestDB(t))
 	p, err := application.NewProjectUseCase(store).Create(context.Background(), "Test", "")
 	if err != nil {
 		t.Fatalf("create project: %v", err)
@@ -424,7 +433,7 @@ func TestChatSendTrimsOversizedHistory(t *testing.T) {
 
 func TestModelUseCaseMergesGatewayAndConfigModels(t *testing.T) {
 	store := NewTestStore(t)
-	catalog, _ := infrastructure.NewFileModelCatalogStore(t.TempDir()+"/models.json", nil)
+	catalog, _ := infrastructure.NewModelCatalogStore(newTestDB(t), nil)
 	uc := application.NewModelUseCase([]domain.ModelInfo{
 		{Name: "gemma4:e4b", Provider: "ollama", Source: "config.yaml"},
 	}, store, catalog)

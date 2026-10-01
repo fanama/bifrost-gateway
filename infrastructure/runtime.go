@@ -3,6 +3,7 @@ package infrastructure
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -226,24 +227,56 @@ func defaultBaseURLFor(p schemas.ModelProvider) string {
 	case schemas.Ollama:
 		return "http://localhost:11434"
 	case schemas.OpenAI:
-		return "https://api.openai.com/v1"
+		return "https://api.openai.com"
 	case schemas.Mistral:
-		return "https://api.mistral.ai/v1"
+		return "https://api.mistral.ai"
 	case schemas.Anthropic:
-		return "https://api.anthropic.com/v1"
+		return "https://api.anthropic.com"
 	case schemas.Groq:
-		return "https://api.groq.com/openai/v1"
+		return "https://api.groq.com/openai"
 	case schemas.OpenRouter:
-		return "https://openrouter.ai/api/v1"
+		return "https://openrouter.ai/api"
 	case schemas.Gemini:
 		return "https://generativelanguage.googleapis.com/v1beta"
 	case schemas.Perplexity:
 		return "https://api.perplexity.ai"
 	case schemas.XAI:
-		return "https://api.x.ai/v1"
+		return "https://api.x.ai"
 	default:
 		return ""
 	}
+}
+
+// normalizeBaseURL aligns a configured base URL with the path Bifrost appends
+// to it. The OpenAI-compatible, Anthropic, Mistral and Ollama providers all
+// concatenate BaseURL with a path that already carries the API version
+// ("/v1/chat/completions", "/v1/messages"), so a base URL ending in "/v1" would
+// produce "/v1/v1/chat/completions" and the provider would answer with an HTML
+// error page instead of JSON. Version segments Bifrost does not append itself
+// are preserved, because it appends a version-less path to them (Gemini's
+// "/v1beta" + "/models").
+func normalizeBaseURL(baseURL string) string {
+	trimmed := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if trimmed == "" {
+		return ""
+	}
+
+	parsed, err := url.Parse(trimmed)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		// Not an absolute URL (e.g. an unresolved env placeholder): leave as is.
+		return trimmed
+	}
+
+	path := parsed.Path
+	for _, suffix := range []string{"/chat/completions", "/v1"} {
+		if trimmedPath, ok := strings.CutSuffix(path, suffix); ok {
+			path = trimmedPath
+		}
+	}
+	parsed.Path = strings.TrimRight(path, "/")
+	parsed.RawPath = ""
+
+	return strings.TrimRight(parsed.String(), "/")
 }
 
 type DynamicAccount struct {
@@ -289,9 +322,9 @@ func (a *DynamicAccount) GetKeysForProvider(_ context.Context, _ schemas.ModelPr
 }
 
 func (a *DynamicAccount) GetConfigForProvider(provider schemas.ModelProvider) (*schemas.ProviderConfig, error) {
-	baseURL := strings.TrimSpace(ResolveEnv(a.baseURL))
+	baseURL := normalizeBaseURL(ResolveEnv(a.baseURL))
 	if baseURL == "" {
-		baseURL = defaultBaseURLFor(provider)
+		baseURL = normalizeBaseURL(defaultBaseURLFor(provider))
 	}
 	return &schemas.ProviderConfig{
 		NetworkConfig: schemas.NetworkConfig{

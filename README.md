@@ -64,10 +64,10 @@ gteway-local/
 ├── main.go                    # Point d'entree, serveur HTTP, wiring
 ├── go.mod / go.sum            # Dependencies Go
 ├── config.yaml                # Configuration BifrostAI + modeles
-├── compose.yml                # Docker Compose (passerelle + deps externes : Postgres, Redis)
+├── compose.yml                # Docker Compose (passerelle autonome : SQLite + cache memoire)
 ├── Dockerfile                 # Build scratch (zero pull registre, binaire Linux local)
 ├── Makefile                   # Raccourcis build/run/test
-├── data/                      # Stores JSON (configs.json, projects.json, apikeys.json)
+├── data/                      # Base SQLite (bridge.db) + anciens stores JSON a migrer
 ├── domain/                    # Cœur metier (0 dependance framework)
 │   ├── models.go              # Metadata, TeamMetadata, RequestMetadata
 │   ├── chat.go                # ChatMessage, ChatRequest, EnrichedRequest
@@ -168,12 +168,15 @@ Les configurations (provider, modele, base URL, cle API, system prompt, temperat
 make test
 ```
 
-### 3. Docker Compose (Dependances Externes uniquement)
+### 3. Docker Compose (Passerelle Autonome)
 
-`compose.yml` simule uniquement les **dependances externes** de la passerelle (Postgres, Redis). L'application elle-meme
-est le service `gateway`. L'image est construite sans aucune dépendance à un registre (`FROM scratch`) : le binaire
-Linux est cross-compilé en local (`make build-linux`) puis copié dans l'image, avec le bundle CA copie de l'hote.
-Seuls les services d'infra (Postgres/Redis) necessitent un acces reseau pour leur premier pull.
+La passerelle n'a **aucune dependance externe** : la persistance est un fichier SQLite (`data/bridge.db`) et le cache
+est local au processus (en memoire). Postgres et Redis ont ete supprimes.
+
+`compose.yml` ne declare donc qu'un service, `gateway`. L'image est construite sans aucune dependance a un registre
+(`FROM scratch`) : le binaire Linux est cross-compile en local (`make build-linux`) puis copie dans l'image, avec le
+bundle CA copie de l'hote. Le driver SQLite utilise est **pur Go** (`modernc.org/sqlite`), donc `CGO_ENABLED=0` reste
+compatible avec ce build.
 
 > **Reseau avec Ollama** : dans le conteneur, `localhost` designe le conteneur lui-meme. Pour atteindre l'Ollama de
 > votre machine hote, le service `gateway` expose `host.docker.internal` et positionne
@@ -184,8 +187,6 @@ Seuls les services d'infra (Postgres/Redis) necessitent un acces reseau pour leu
 | Service   | Port publie | Role |
 |---|---|---|
 | **gateway**   | `4000`  | Passerelle Bridge (UI + API OpenAI) |
-| **postgres**  | `5432`  | Base de donnees (dependance externe) |
-| **redis**     | `6379`  | Cache (dependance externe) |
 
 ```bash
 # Demarrer (build image + deps)
@@ -207,18 +208,35 @@ make docker-reset
 # Passerelle (port publie)
 BRIDGE_PORT=4000
 
-# PostgreSQL (dependance externe)
-POSTGRES_USER="bridge"
-POSTGRES_PASSWORD="P6j5Zz4B4EnQZQfbkmGC"
-POSTGRES_DB="bridge-db"
-POSTGRES_PORT=5432
+# Persistance : SQLite, un simple fichier monte dans ./data
+# BRIDGE_DB="/app/data/bridge.db"
 
-# Redis (dependance externe)
-REDIS_PORT=6379
+# Cache : local au processus, regle dans config.yaml (section `cache`)
 
 # BIFROST AI
 BIFROST_MASTER_KEY="cpZ75uPavZpwRLMjD0dj"
 ```
+
+### 5. Persistance et cache
+
+**SQLite.** Toute la persistance passe par un fichier unique (`data/bridge.db` par defaut, surchargeable via
+`--db`). Le schema est cree au demarrage (`Migrate`) et l'import des anciens fichiers JSON de `data/` est automatique
+et idempotent au premier lancement : chaque fichier migre est renomme en `.imported`, et relancer l'import ne
+duplique rien. Pour ignorer l'import, passer `--import-json ""`.
+
+> Un projet existant garde ses donnees : l'import est execute **avant** le seed, donc les providers et modeles deja
+> presents dans les JSON sont conserves (les 8 providers par defaut ne sont ajoutes que sur une base vide).
+
+**Cache en memoire.** Deux caches independants, tous deux configurables dans la section `cache` de `config.yaml` et
+desactivables (`enabled: false`) sans toucher au code :
+
+| Cache | TTL par defaut | Contenu |
+|---|---|---|
+| `cache.stores` | `15s` | Lectures de repositories : cles API par digest, config active, projets |
+| `cache.llm_responses` | `5m` | Reponses LLM identiques (evite un appel reseau au provider) |
+
+Les entrees expirent (TTL) et les plus anciennes sont evincees au-delà de `max_entries`. Les ecritures invalident les
+cles concernees, et les erreurs provider ne sont **jamais** mises en cache.
 
 ---
 
@@ -253,6 +271,14 @@ curl -X POST 'http://localhost:4000/v1/chat/completions' \
     "messages": [{"role": "user", "content": "Quel est ton nom ?"}]
 }'
 ```
+
+curl -X POST 'http://localhost:4000/v1/chat/completions' \
+-H 'Content-Type: application/json' \
+-H 'Authorization: Bearer sk-bridge-5a09f2a7b972bd4da3705a18c10b8c5d5166514c2225f3935c3a3c22e9fcb6e9' \
+-d '{
+    "model": "gemma4:e4b",
+    "messages": [{"role": "user", "content": "Quel est ton nom ?"}]
+}
 
 > La cle de projet doit etre copiee des sa creation : seul son prefixe (`sk-bridge-XXXXXXXX…`) et son empreinte SHA-256 sont conserves.
 

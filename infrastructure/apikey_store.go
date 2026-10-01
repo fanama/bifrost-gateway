@@ -2,40 +2,45 @@ package infrastructure
 
 import (
 	"context"
+	"database/sql"
 
 	"bridge-gateway/domain"
 )
 
-type FileAPIKeyStore struct {
+// APIKeyStore implemente domain.APIKeyRepository sur SQLite.
+type APIKeyStore struct {
 	*Adapter[domain.APIKey]
 }
 
-func NewFileAPIKeyStore(path string) (*FileAPIKeyStore, error) {
-	inner, err := NewJSONStore[domain.APIKey](path)
-	if err != nil {
-		return nil, err
-	}
-	return &FileAPIKeyStore{Adapter: NewAdapter(
+func NewAPIKeyStore(db *sql.DB) *APIKeyStore {
+	inner := NewSQLStore[domain.APIKey](db, TableAPIKeys, func(k *domain.APIKey) string { return k.ID })
+	return &APIKeyStore{Adapter: NewAdapter(
 		inner,
 		func(k *domain.APIKey) string { return k.ID },
 		domain.ErrAPIKeyNotFound,
 		nil,
-	)}, nil
+	)}
 }
 
-func (s *FileAPIKeyStore) ListByProject(_ context.Context, projectID string) ([]domain.APIKey, error) {
-	return s.store.Where(func(k domain.APIKey) bool { return k.ProjectID == projectID }), nil
+func (s *APIKeyStore) ListByProject(ctx context.Context, projectID string) ([]domain.APIKey, error) {
+	return s.Store().WhereSQL(ctx, `json_extract(payload, '$.project_id') = ?`, projectID)
 }
 
-func (s *FileAPIKeyStore) FindByDigest(_ context.Context, digest string) (*domain.APIKey, error) {
+// FindByDigest est le chemin le plus chaud du gateway : chaque requete
+// /v1/chat/completions resout sa cle via cette methode. Le predicat est pousse
+// jusqu'a l'index json_extract(payload, '$.digest').
+func (s *APIKeyStore) FindByDigest(ctx context.Context, digest string) (*domain.APIKey, error) {
 	if digest == "" {
 		return nil, domain.ErrAPIKeyNotFound
 	}
-	k, ok := s.store.FindWhere(func(key domain.APIKey) bool { return key.Digest == digest })
+	item, ok, err := s.Store().FindBySQL(ctx, `json_extract(payload, '$.digest') = ?`, digest)
+	if err != nil {
+		return nil, err
+	}
 	if !ok {
 		return nil, domain.ErrAPIKeyNotFound
 	}
-	return k, nil
+	return item, nil
 }
 
-var _ domain.APIKeyRepository = (*FileAPIKeyStore)(nil)
+var _ domain.APIKeyRepository = (*APIKeyStore)(nil)

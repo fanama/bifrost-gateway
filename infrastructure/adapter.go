@@ -7,39 +7,48 @@ import (
 )
 
 // Adapter traduit les ports de persistance generiques du domaine
-// (CrudRepository[T], UpdatableRepository[T]) vers le JSONStore[T] (adaptee).
-// C'est la realisation Go de l'Adapter pattern : le JSONStore expose des
-// operations bas niveau (FindWhere, Insert, Update, Remove... sans erreurs de
-// domaine) ; l'adapteur les convertit en signatures attendues par
-// l'application (erreur notFound, invariants de creation via reject).
+// (CrudRepository[T], UpdatableRepository[T]) vers le SQLStore[T].
+//
+// C'est la realisation Go de l'Adapter pattern : le SQLStore expose des
+// operations bas niveau sur une table (All, FindBySQL, Insert, Replace, Remove)
+// sans erreurs de domaine ; l'adapteur les convertit en signatures attendues
+// par l'application (notFound quand l'identifiant est absent, invariants de
+// creation via reject).
 //
 // Les stores par entite embarquent cet adapteur et n'ajoutent que leurs
 // operations specifiques (SetActive, ListByProject, FindByDigest...).
 type Adapter[T any] struct {
-	store    *JSONStore[T]
+	store    *SQLStore[T]
 	idOf     func(*T) string
 	notFound error
 	reject   func(item T, items []T) error
 }
 
-func NewAdapter[T any](store *JSONStore[T], idOf func(*T) string, notFound error, reject func(item T, items []T) error) *Adapter[T] {
+func NewAdapter[T any](store *SQLStore[T], idOf func(*T) string, notFound error, reject func(item T, items []T) error) *Adapter[T] {
 	return &Adapter[T]{store: store, idOf: idOf, notFound: notFound, reject: reject}
 }
 
-func (a *Adapter[T]) List(_ context.Context) ([]T, error) {
-	return a.store.All()
+// Store expose le SQLStore sous-jacent aux stores d'entite, pour requeter la
+// table via des clauses SQL indexees (ListByProject, FindByDigest...).
+func (a *Adapter[T]) Store() *SQLStore[T] { return a.store }
+
+func (a *Adapter[T]) List(ctx context.Context) ([]T, error) {
+	return a.store.All(ctx)
 }
 
-func (a *Adapter[T]) Get(_ context.Context, id string) (*T, error) {
-	item, ok := a.store.FindWhere(func(v T) bool { return a.idOf(&v) == id })
+func (a *Adapter[T]) Get(ctx context.Context, id string) (*T, error) {
+	item, ok, err := a.store.FindBySQL(ctx, "id = ?", id)
+	if err != nil {
+		return nil, err
+	}
 	if !ok {
 		return nil, a.notFound
 	}
 	return item, nil
 }
 
-func (a *Adapter[T]) Create(_ context.Context, item *T) error {
-	return a.store.Insert(*item, func(items []T) error {
+func (a *Adapter[T]) Create(ctx context.Context, item *T) error {
+	return a.store.Insert(ctx, item, func(items []T) error {
 		if a.reject != nil {
 			return a.reject(*item, items)
 		}
@@ -47,8 +56,8 @@ func (a *Adapter[T]) Create(_ context.Context, item *T) error {
 	})
 }
 
-func (a *Adapter[T]) Delete(_ context.Context, id string) error {
-	found, err := a.store.Remove(a.idOf, id)
+func (a *Adapter[T]) Delete(ctx context.Context, id string) error {
+	found, err := a.store.Remove(ctx, id)
 	if err != nil {
 		return err
 	}
@@ -58,8 +67,8 @@ func (a *Adapter[T]) Delete(_ context.Context, id string) error {
 	return nil
 }
 
-func (a *Adapter[T]) Update(_ context.Context, item *T) error {
-	found, err := a.store.Update(a.idOf, a.idOf(item), func(cur *T) { *cur = *item })
+func (a *Adapter[T]) Update(ctx context.Context, item *T) error {
+	found, err := a.store.Replace(ctx, a.idOf(item), item)
 	if err != nil {
 		return err
 	}

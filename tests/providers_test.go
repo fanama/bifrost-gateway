@@ -3,7 +3,6 @@ package tests
 import (
 	"context"
 	"errors"
-	"os"
 	"testing"
 
 	"bridge-gateway/application"
@@ -11,30 +10,29 @@ import (
 	"bridge-gateway/infrastructure"
 )
 
-func newProviderStore(t *testing.T, seeds []domain.Provider) *infrastructure.FileProviderStore {
+func newProviderStore(t *testing.T, seeds []domain.Provider) *infrastructure.ProviderStore {
 	t.Helper()
-	s, err := infrastructure.NewFileProviderStore(t.TempDir()+"/providers.json", seeds)
+	s, err := infrastructure.NewProviderStore(newTestDB(t), seeds)
 	if err != nil {
 		t.Fatalf("new provider store: %v", err)
 	}
 	return s
 }
 
-func newCatalogStore(t *testing.T, seeds []domain.CatalogModel) *infrastructure.FileModelCatalogStore {
+func newCatalogStore(t *testing.T, seeds []domain.CatalogModel) *infrastructure.ModelCatalogStore {
 	t.Helper()
-	s, err := infrastructure.NewFileModelCatalogStore(t.TempDir()+"/models.json", seeds)
+	s, err := infrastructure.NewModelCatalogStore(newTestDB(t), seeds)
 	if err != nil {
 		t.Fatalf("new catalog store: %v", err)
 	}
 	return s
 }
 
-func TestProviderStoreSeedsWhenFileMissing(t *testing.T) {
-	dir := t.TempDir()
-	path := dir + "/providers.json"
-
+func TestProviderStoreSeedsOnlyOnce(t *testing.T) {
+	db := newTestDB(t)
 	seeds := []domain.Provider{{ID: "prov-ollama", Name: "ollama", BaseURL: "http://localhost:11434"}}
-	s, err := infrastructure.NewFileProviderStore(path, seeds)
+
+	s, err := infrastructure.NewProviderStore(db, seeds)
 	if err != nil {
 		t.Fatalf("new store: %v", err)
 	}
@@ -43,13 +41,11 @@ func TestProviderStoreSeedsWhenFileMissing(t *testing.T) {
 		t.Fatalf("expected seeds, got %#v", list)
 	}
 
-	// Le fichier doit avoir ete persiste : un second chargement ne re-seed pas.
-	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("seed file not persisted: %v", err)
-	}
-	s2, err := infrastructure.NewFileProviderStore(path, []domain.Provider{{ID: "x", Name: "autre"}})
+	// La table est desormais peuplee : un second store sur la meme base ne doit
+	// pas re-seeder.
+	s2, err := infrastructure.NewProviderStore(db, []domain.Provider{{ID: "x", Name: "autre"}})
 	if err != nil {
-		t.Fatalf("reload: %v", err)
+		t.Fatalf("reopen store: %v", err)
 	}
 	list2, _ := s2.List(context.Background())
 	if len(list2) != 1 || list2[0].Name != "ollama" {

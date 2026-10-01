@@ -81,6 +81,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /projects", s.createProject)
 	mux.HandleFunc("GET /projects/{pid}", s.pageProjectDetail)
 	mux.HandleFunc("POST /projects/{pid}/configs", s.createProjectConfig)
+	mux.HandleFunc("GET /projects/{pid}/configs/models", s.projectConfigModels)
 	mux.HandleFunc("GET /projects/{pid}/configs/{cid}/edit", s.editProjectConfigForm)
 	mux.HandleFunc("POST /projects/{pid}/configs/{cid}", s.updateProjectConfig)
 	mux.HandleFunc("POST /projects/{pid}/configs/{cid}/activate", s.activateProjectConfig)
@@ -130,23 +131,25 @@ func (s *Server) providerNames(ctx context.Context) []string {
 	return names
 }
 
-func (s *Server) baseForm(ctx context.Context, action string, editing *domain.ChatConfig) configFormData {
+func (s *Server) baseForm(ctx context.Context, pid string, editing *domain.ChatConfig) configFormData {
 	data := configFormData{
-		Action:      action,
+		ProjectID:   pid,
+		Action:      "/projects/" + pid + "/configs",
 		Editing:     editing,
 		IsCreate:    editing == nil,
 		UseDefaults: editing == nil,
 		Providers:   s.providerNames(ctx),
-		ModelHints:  s.modelHints(ctx),
 	}
 	if editing != nil {
+		data.Action += "/" + editing.ID
 		data.SelectedProvider = editing.Provider
 	}
+	data.ModelHints = s.modelHints(ctx, data.SelectedProvider)
 	return data
 }
 
-func (s *Server) modelHints(ctx context.Context) []string {
-	models, err := s.models.List(ctx)
+func (s *Server) modelHints(ctx context.Context, provider string) []string {
+	models, err := s.models.ListForProvider(ctx, provider)
 	if err != nil {
 		return nil
 	}
@@ -163,11 +166,48 @@ func (s *Server) pageChat(w http.ResponseWriter, r *http.Request) {
 		s.renderToast(w, "#chat-error", err.Error())
 		return
 	}
+
+	// L'exemple curl propose par defaut le modele de la configuration active,
+	// sinon celui de la premiere configuration disponible.
+	defaultModel := ""
+	for i := range configs {
+		if configs[i].Active {
+			defaultModel = configs[i].Model
+			break
+		}
+	}
+	if defaultModel == "" && len(configs) > 0 {
+		defaultModel = configs[0].Model
+	}
+
 	s.render(w, "page_chat", map[string]any{
-		"Active":  "chat",
-		"Title":   "Discussion",
-		"Configs": configs,
+		"Active":       "chat",
+		"Title":        "Discussion",
+		"Configs":      configs,
+		"BaseURL":      chatAPIBaseURL(r),
+		"DefaultModel": defaultModel,
 	})
+}
+
+// chatAPIBaseURL reconstruit l'origine publique de la passerelle, pour que
+// l'exemple curl fonctionne tel quel derriere un reverse proxy ou sur un port
+// different de celui du serveur local.
+func chatAPIBaseURL(r *http.Request) string {
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	if forwarded := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")); forwarded != "" {
+		scheme = strings.TrimSpace(strings.Split(forwarded, ",")[0])
+	}
+	host := strings.TrimSpace(r.Host)
+	if forwarded := strings.TrimSpace(r.Header.Get("X-Forwarded-Host")); forwarded != "" {
+		host = strings.TrimSpace(strings.Split(forwarded, ",")[0])
+	}
+	if host == "" {
+		return ""
+	}
+	return scheme + "://" + host
 }
 
 func (s *Server) chatSend(w http.ResponseWriter, r *http.Request) {
@@ -402,7 +442,7 @@ func (s *Server) projectDetailData(ctx context.Context, pid string, project *dom
 		"Active":    "configs",
 		"Title":     project.Name,
 		"Project":   project,
-		"Form":      s.baseForm(ctx, "/projects/"+pid+"/configs", nil),
+		"Form":      s.baseForm(ctx, pid, nil),
 		"Configs":   configs,
 		"Keys":      keys,
 		"NewKey":    newKey,
@@ -424,7 +464,7 @@ func (s *Server) renderProjectConfigsSection(w http.ResponseWriter, r *http.Requ
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	s.render(w, "project_configs_section", map[string]any{
 		"Project": project,
-		"Form":    s.baseForm(r.Context(), "/projects/"+pid+"/configs", nil),
+		"Form":    s.baseForm(r.Context(), pid, nil),
 		"Configs": configs,
 	})
 }
@@ -502,7 +542,32 @@ func (s *Server) editProjectConfigForm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	s.render(w, "config_form", s.baseForm(r.Context(), "/projects/"+pid+"/configs/"+cfg.ID, cfg))
+	s.render(w, "config_form", s.baseForm(r.Context(), pid, cfg))
+}
+
+func (s *Server) projectConfigModels(w http.ResponseWriter, r *http.Request) {
+	pid := r.PathValue("pid")
+	if pid == "" {
+		http.NotFound(w, r)
+		return
+	}
+
+	provider := strings.TrimSpace(r.FormValue("provider"))
+	models, err := s.models.ListForProvider(r.Context(), provider)
+	if err != nil {
+		s.renderToast(w, "#project-config-error", err.Error())
+		return
+	}
+
+	hints := make([]string, 0, len(models))
+	for _, m := range models {
+		hints = append(hints, m.Name)
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	// La definition du template fait `range .`, donc le dot doit etre la slice
+	// elle-meme. Passer une map produirait une seule option contenant le slice.
+	s.render(w, "config_model_hints", hints)
 }
 
 func (s *Server) renderProjectKeysSection(w http.ResponseWriter, r *http.Request, pid string, newKey string) {
@@ -599,6 +664,7 @@ type configFormData struct {
 	Editing          *domain.ChatConfig
 	Action           string
 	Target           string
+	ProjectID        string
 	IsCreate         bool
 	UseDefaults      bool
 	Providers        []string
