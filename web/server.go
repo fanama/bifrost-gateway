@@ -226,14 +226,18 @@ func (s *Server) chatSend(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	messages, err := s.chat.Send(r.Context(), cfgID, history, message)
+	result, err := s.chat.Send(r.Context(), cfgID, history, message)
 	if err != nil {
 		s.renderToast(w, "#chat-error", err.Error())
 		return
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	s.render(w, "chat_messages", map[string]any{"Messages": messages})
+	s.render(w, "chat_messages", map[string]any{
+		"Messages":       result.Messages,
+		"ServedModel":    result.Model,
+		"RequestedModel": result.RequestedModel,
+	})
 }
 
 // ---- Providers ----
@@ -624,6 +628,7 @@ func parseConfigForm(r *http.Request) *domain.ChatConfig {
 		Name:             strings.TrimSpace(r.FormValue("name")),
 		Provider:         strings.ToLower(strings.TrimSpace(r.FormValue("provider"))),
 		Model:            strings.TrimSpace(r.FormValue("model")),
+		Tier:             strings.ToLower(strings.TrimSpace(r.FormValue("tier"))),
 		BaseURL:          strings.TrimSpace(r.FormValue("base_url")),
 		APIKey:           strings.TrimSpace(r.FormValue("api_key")),
 		SystemPrompt:     strings.TrimSpace(r.FormValue("system_prompt")),

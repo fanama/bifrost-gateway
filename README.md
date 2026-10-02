@@ -238,6 +238,75 @@ desactivables (`enabled: false`) sans toucher au code :
 Les entrees expirent (TTL) et les plus anciennes sont evincees au-delà de `max_entries`. Les ecritures invalident les
 cles concernees, et les erreurs provider ne sont **jamais** mises en cache.
 
+### 6. Routage par tier et bascule sur saturation
+
+Desactive par defaut (`routing.enabled: false`). Quand il est actif, chaque requete part vers le modele le moins
+couteux qui suffise, et remonte d'un cran si le fournisseur ne peut pas servir.
+
+**Declencher le routage.** Attribuer un *tier* a chaque configuration du projet depuis l'onglet Projects
+(`fast` < `balanced` < `frontier`). Une configuration sans tier reste utilisable et sert de point de depart, mais ne
+figure pas dans l'echelle. Le champ est stocke en JSON dans `chat_configs` : aucun `ALTER TABLE` n'est necessaire.
+
+**Deux mecanismes, la meme direction.**
+
+- Le **classifieur** (un petit modele local) evalue la complexite de la conversation *entiere*, pas seulement le dernier
+  message : une conversation qui s'allonge exige naturellement plus de puissance. Il ne peut ni descendre sous le tier
+  choisi explicitement par l'utilisateur, ni envoyer une requete complexe vers un modele trop faible.
+- La **saturation** fait monter d'un cran quand le provider echoue :
+
+  | Declencheur | Exemple | Remede |
+  |---|---|---|
+  | `rate_limit` | HTTP 429, quota epuise | un autre provider a son propre quota |
+  | `model_unavailable` | HTTP 404 sur le nom du modele | un autre tier peut le servir |
+  | `context_length` | HTTP 400, historique trop long | un modele plus grand |
+  | `unavailable` | HTTP 5xx, timeout, reseau | panne isolee a un provider |
+  | `auth` | HTTP 401 / 403 | **peut masquer une mauvaise cle API** — reste visible dans les logs |
+
+  Un 4xx attribuable a la requete elle-meme (JSON invalide, mauvais chemin d'API) **n'entraine aucune bascule** : aucun
+  autre modele ne la rendrait valide, et multiplier les appels ne ferait qu'aggraver la situation.
+
+**Ce qui ne bascule pas.** Seuls `provider`, `model`, `base_url` et `api_key` proviennent du tier cible. Le system
+prompt, la temperature, le `top_p`, les penalties et le format de reponse restent ceux de la configuration active :
+changer de modele ne doit pas changer silencieusement le comportement d'une conversation en cours.
+
+**Cooldown.** Apres un echec, le tier reste ecarte pendant `routing.cooldown` (`60s` par defaut), ce qui evite de
+rebruler un modele mort sur chaque requete. La cle est `provider/model` : corriger la configuration vers un autre
+modele la rend de nouveau eligible immediatement. Un cooldown qui viderait toute l'echelle est ignore, pour ne pas
+preferer ne pas repondre.
+
+**Configuration.**
+
+```yaml
+routing:
+  enabled: true
+  min_confidence: 0.6    # sous ce seuil, la config active est conservee
+  cooldown: "60s"        # 0 desactive la memorisation des saturations
+  max_attempts: 0        # 0 = toute l'echelle
+  max_retries: 1         # reessais Bifrost par appel (2 sinon)
+  classifier:
+    provider: ollama
+    model: granite4:tiny-h   # voir l'avertissement de latence ci-dessous
+    max_input_chars: 6000
+    max_tokens: 64
+    timeout: "10s"           # au-dela, la precision est sacrifiee, pas la requete
+```
+
+**Latence : le point d'attention.** Le classifieur est un appel LLM supplementaire, sur **chaque requete qui n'est
+pas un hit de cache**. Mesure sur cette machine, `gemma4:e4b` comme classifieur a coute **~25 s** par requete, ce qui
+est inacceptable. Deux leviers :
+
+1. mettre un **vraiment petit modele** en `classifier.model` (`granite4:tiny-h`, `qwen2.5`, `smollm2`) — c'est le
+   levier principal ;
+2. fixer `classifier.timeout` : au-dela, le classifieur est abandonne et la configuration active est conservee. La
+   reponse est alors servie au prix de la precision du routage, jamais au prix de la perte de la requete.
+
+Le cache de reponses absorbe les repetitions exactes : la cle est calculee sur la configuration active, donc un hit
+evite a la fois la classification et toute l'echelle de bascule.
+
+**Observabilite.** Les decisions sont journalisees, et la reponse HTTP renvoie le modele qui a **reellement** produit
+le texte (champ `model`), pas celui de la configuration demandee. L'UI affiche « Reponse produite par ... » des que les
+deux different.
+
 ---
 
 ## Exemple d'Utilisation

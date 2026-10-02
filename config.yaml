@@ -26,3 +26,46 @@ cache:
     enabled: true
     ttl: "5m"
     max_entries: 512
+
+# Routage par tier de complexite.
+#
+# Chaque configuration de projet porte un tier (fast < balanced < frontier). Un
+# petit modele local classe la conversation, et la requete part du tier le plus
+# bas qui suffise. Si le provider sature (rate limit, quota, contexte trop long,
+# panne, cle refusee), la requete monte d'un cran et le tier est ecarte
+# temporairement.
+#
+# Le decorateur est en OUTSURE du cache de reponses : la cle est donc calculee
+# sur la configuration active, et un hit evite a la fois la classification et
+# l'echelle de bascule.
+routing:
+  enabled: false
+  # En dessous de ce seuil le verdict est rejete et la configuration active est
+  # conservee : un cas limite ne justifie pas de deviner.
+  min_confidence: 0.6
+  # Duree pendant laquelle un tier qui vient d'echouer est ecarte. Zero
+  # desactive la memorisation des saturations.
+  cooldown: "60s"
+  # Nombre maximum de modeles testes. Zero = toute l'echelle (3 tiers).
+  max_attempts: 0
+  # Reessais internes de Bifrost par appel. Reduits a 1 quand le routage est
+  # actif, l'echelle de tiers assurant deja la re-tentative sur un autre modele.
+  max_retries: 1
+  classifier:
+    # Modele local : cout nul et disponible hors ligne. Ne pas y mettre un modele
+    # lent : il est appele sur chaque requete non mise en cache. Mesure ici,
+    # gemma4:e4b comme classifieur coute ~25 s par requete, un petit modele
+    # comme granite4:tiny-h une fraction de seconde.
+    provider: ollama
+    model: granite4:tiny-h
+    # BaseURL vide = valeur par defaut du provider (OLLAMA_HOST ou
+    # http://localhost:11434).
+    base_url: ""
+    # L'historique complet est classe, pas seulement le dernier message. Ce
+    # plafond evite qu'une tres longue conversation ne coute plus cher a classer
+    # que la reponse qu'elle cherche a optimiser.
+    max_input_chars: 6000
+    max_tokens: 64
+    # Au-dela de ce delai, le classifieur est abandonne et la configuration
+    # active sert : on sacrifie la precision du routage, jamais la requete.
+    timeout: "10s"

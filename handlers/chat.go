@@ -104,12 +104,12 @@ func (h *ChatHandler) handleProjectRequest(w http.ResponseWriter, r *http.Reques
 	}
 
 	reply := ""
-	if len(result) > 0 {
-		reply = result[len(result)-1].Content
+	if msgs := result.Messages; len(msgs) > 0 {
+		reply = msgs[len(msgs)-1].Content
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(buildCompletionResponse(cfg.Model, reply))
+	json.NewEncoder(w).Encode(buildCompletionResponse(result.Model, reply))
 }
 
 func buildCompletionResponse(model, content string) ChatCompletionResponse {

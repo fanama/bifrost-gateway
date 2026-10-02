@@ -63,6 +63,7 @@ func (u *ConfigUseCase) Update(ctx context.Context, id string, patch *domain.Cha
 	existing.Name = strings.TrimSpace(patch.Name)
 	existing.Provider = strings.ToLower(strings.TrimSpace(patch.Provider))
 	existing.Model = strings.TrimSpace(patch.Model)
+	existing.Tier = strings.ToLower(strings.TrimSpace(patch.Tier))
 	existing.BaseURL = strings.TrimSpace(patch.BaseURL)
 	existing.APIKey = strings.TrimSpace(patch.APIKey)
 	existing.SystemPrompt = patch.SystemPrompt

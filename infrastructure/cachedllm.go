@@ -38,7 +38,7 @@ func NewCachedLLMProvider(inner domain.LLMProvider, cache domain.Cache, ttl time
 	}
 }
 
-func (p *CachedLLMProvider) Chat(ctx context.Context, cfg *domain.ChatConfig, messages []domain.ChatMessage) (string, error) {
+func (p *CachedLLMProvider) Chat(ctx context.Context, cfg *domain.ChatConfig, messages []domain.ChatMessage) (domain.LLMResult, error) {
 	if p.ttl <= 0 {
 		return p.inner.Chat(ctx, cfg, messages)
 	}
@@ -51,7 +51,7 @@ func (p *CachedLLMProvider) Chat(ctx context.Context, cfg *domain.ChatConfig, me
 	}
 
 	if raw, ok := p.cache.Get(key); ok {
-		var cached string
+		var cached domain.LLMResult
 		if err := json.Unmarshal(raw, &cached); err == nil {
 			return cached, nil
 		}
@@ -59,9 +59,13 @@ func (p *CachedLLMProvider) Chat(ctx context.Context, cfg *domain.ChatConfig, me
 
 	reply, err := p.inner.Chat(ctx, cfg, messages)
 	if err != nil {
-		return "", err
+		return domain.LLMResult{}, err
 	}
 
+	// Le modele qui a repondu est memorise avec le texte : le cache separe du
+	// routeur, donc une entrie peut avoir ete produite par un autre modele que
+	// celui de la configuration demandee. Sans cela, un hit rapporterait un modele
+	// qui n'a pas produit la reponse.
 	if raw, err := json.Marshal(reply); err == nil {
 		p.cache.Set(key, raw, time.Duration(p.ttl)*time.Second)
 	}
@@ -72,6 +76,10 @@ func (p *CachedLLMProvider) Chat(ctx context.Context, cfg *domain.ChatConfig, me
 // provider : identite de la config + historique des messages. Les champs de
 // sampling (temperature, max_tokens) sont inclus pour ne pas servir la reponse
 // d'un appel non deterministe a une requete configuree differemment.
+//
+// tier figure dans la cle parce qu'il conditionne le modele reellement choisi
+// par le routeur : deux configurations identiques mais de tiers differents
+// peuvent aboutir a deux modeles differents pour la meme conversation.
 func (p *CachedLLMProvider) cacheKey(cfg *domain.ChatConfig, messages []domain.ChatMessage) (string, error) {
 	h := sha256.New()
 
@@ -84,6 +92,7 @@ func (p *CachedLLMProvider) cacheKey(cfg *domain.ChatConfig, messages []domain.C
 
 	writeField("provider", cfg.Provider)
 	writeField("model", cfg.Model)
+	writeField("tier", cfg.Tier)
 	writeField("base_url", cfg.BaseURL)
 	writeField("temperature", fmt.Sprintf("%g", valueOrZero(cfg.Temperature)))
 	writeField("max_tokens", fmt.Sprintf("%d", valueOrZero(cfg.MaxTokens)))

@@ -17,7 +17,16 @@ type BifrostLLMProvider struct {
 	mu        sync.Mutex
 	clients   map[string]*BifrostClient
 	providers domain.ProviderRepository
+	// maxRetries borne les reessais internes de Bifrost par appel. Quand le
+	// routeur est actif, il vaut 1 : l'echelle de tiers assure deja la
+	// re-tentative sur un autre modele, et cumuler les deux triplerait la
+	// latence avant echec.
+	maxRetries int
 }
+
+// defaultMaxRetries conserve le comportement historique quand aucun routage
+// n'est configure.
+const defaultMaxRetries = 2
 
 func NewBifrostLLMProvider(providers ...domain.ProviderRepository) *BifrostLLMProvider {
 	var repo domain.ProviderRepository
@@ -25,25 +34,50 @@ func NewBifrostLLMProvider(providers ...domain.ProviderRepository) *BifrostLLMPr
 		repo = providers[0]
 	}
 	return &BifrostLLMProvider{
-		clients:   map[string]*BifrostClient{},
-		providers: repo,
+		clients:    map[string]*BifrostClient{},
+		providers:  repo,
+		maxRetries: defaultMaxRetries,
 	}
 }
 
-func (p *BifrostLLMProvider) resolveProvider(ctx context.Context, providerName string) *domain.Provider {
-	if p.providers == nil {
+// SetMaxRetries fixe le nombre de reessais par appel. Une valeur nulle ou
+// negative restaure la valeur par defaut, pour qu'une configuration incomplete
+// n'empeche pas le demarrage.
+func (p *BifrostLLMProvider) SetMaxRetries(n int) {
+	if n <= 0 {
+		n = defaultMaxRetries
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.maxRetries = n
+	// Les clients existants gardent l'ancien budget : les reconstruire a chaque
+	// appel serait plus couteux que de ne pas reappliquer la regle aux
+	// configurations deja en cache.
+	p.clients = map[string]*BifrostClient{}
+}
+
+// resolveProvider retrouve un provider enregistre par son nom ou son identifiant.
+// Il est partage entre le provider Bifrost et le routeur, qui doit empowered les
+// memes credentials pour un tier qu'il substitue a la configuration active.
+func resolveProvider(ctx context.Context, repo domain.ProviderRepository, providerName string) *domain.Provider {
+	if repo == nil {
 		return nil
 	}
-	list, err := p.providers.List(ctx)
+	list, err := repo.List(ctx)
 	if err != nil {
 		return nil
 	}
 	for _, prov := range list {
 		if strings.EqualFold(prov.Name, providerName) || strings.EqualFold(prov.ID, providerName) {
-			return &prov
+			found := prov
+			return &found
 		}
 	}
 	return nil
+}
+
+func (p *BifrostLLMProvider) resolveProvider(ctx context.Context, providerName string) *domain.Provider {
+	return resolveProvider(ctx, p.providers, providerName)
 }
 
 func ResolveEnv(val string) string {
@@ -92,7 +126,7 @@ func (p *BifrostLLMProvider) clientFor(ctx context.Context, cfg *domain.ChatConf
 	if c, ok := p.clients[key]; ok {
 		return c, nil
 	}
-	client, err := NewBifrostClient(NewDynamicAccount(cfg, apiKey, baseURL))
+	client, err := NewBifrostClient(NewDynamicAccount(cfg, apiKey, baseURL).withMaxRetries(p.maxRetries))
 	if err != nil {
 		return nil, fmt.Errorf("init bifrost client: %w", err)
 	}
@@ -100,15 +134,15 @@ func (p *BifrostLLMProvider) clientFor(ctx context.Context, cfg *domain.ChatConf
 	return client, nil
 }
 
-func (p *BifrostLLMProvider) Chat(ctx context.Context, cfg *domain.ChatConfig, messages []domain.ChatMessage) (string, error) {
+func (p *BifrostLLMProvider) Chat(ctx context.Context, cfg *domain.ChatConfig, messages []domain.ChatMessage) (domain.LLMResult, error) {
 	provider, err := ToModelProvider(cfg.Provider)
 	if err != nil {
-		return "", err
+		return domain.LLMResult{}, err
 	}
 
 	client, err := p.clientFor(ctx, cfg)
 	if err != nil {
-		return "", err
+		return domain.LLMResult{}, err
 	}
 
 	bifrostMessages := make([]schemas.ChatMessage, 0, len(messages))
@@ -122,9 +156,9 @@ func (p *BifrostLLMProvider) Chat(ctx context.Context, cfg *domain.ChatConfig, m
 
 	resp, err := client.ChatCompletion(ctx, provider, cfg.Model, bifrostMessages, chatParams(cfg))
 	if err != nil {
-		return "", err
+		return domain.LLMResult{}, err
 	}
-	return ExtractAssistantContent(resp), nil
+	return domain.LLMResult{Content: ExtractAssistantContent(resp), Model: cfg.Model}, nil
 }
 
 func chatParams(cfg *domain.ChatConfig) *schemas.ChatParameters {
@@ -283,6 +317,9 @@ type DynamicAccount struct {
 	cfg     *domain.ChatConfig
 	apiKey  string
 	baseURL string
+	// retries vaut 0 tant qu'il n'a pas ete fixe, ce qui laisse GetConfigForProvider
+	// appliquer defaultMaxRetries.
+	retries int
 }
 
 func NewDynamicAccount(cfg *domain.ChatConfig, customParams ...string) *DynamicAccount {
@@ -295,6 +332,11 @@ func NewDynamicAccount(cfg *domain.ChatConfig, customParams ...string) *DynamicA
 		baseURL = customParams[1]
 	}
 	return &DynamicAccount{cfg: cfg, apiKey: apiKey, baseURL: baseURL}
+}
+
+func (a *DynamicAccount) withMaxRetries(n int) *DynamicAccount {
+	a.retries = n
+	return a
 }
 
 func (a *DynamicAccount) provider() (schemas.ModelProvider, error) {
@@ -326,11 +368,15 @@ func (a *DynamicAccount) GetConfigForProvider(provider schemas.ModelProvider) (*
 	if baseURL == "" {
 		baseURL = normalizeBaseURL(defaultBaseURLFor(provider))
 	}
+	retries := a.retries
+	if retries <= 0 {
+		retries = defaultMaxRetries
+	}
 	return &schemas.ProviderConfig{
 		NetworkConfig: schemas.NetworkConfig{
 			BaseURL:                        baseURL,
 			DefaultRequestTimeoutInSeconds: 60,
-			MaxRetries:                     2,
+			MaxRetries:                     retries,
 			RetryBackoffInitial:            500 * time.Millisecond,
 			RetryBackoffMax:                5 * time.Second,
 		},

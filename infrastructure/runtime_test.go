@@ -504,14 +504,16 @@ type countingLLM struct {
 	calls    int
 	reply    string
 	failWith error
+	lastCfg  *domain.ChatConfig
 }
 
-func (c *countingLLM) Chat(ctx context.Context, cfg *domain.ChatConfig, messages []domain.ChatMessage) (string, error) {
+func (c *countingLLM) Chat(ctx context.Context, cfg *domain.ChatConfig, messages []domain.ChatMessage) (domain.LLMResult, error) {
 	c.calls++
+	c.lastCfg = cfg
 	if c.failWith != nil {
-		return "", c.failWith
+		return domain.LLMResult{}, c.failWith
 	}
-	return c.reply, nil
+	return domain.LLMResult{Content: c.reply, Model: cfg.Model}, nil
 }
 
 func TestCachedLLMProviderCachesIdenticalRequests(t *testing.T) {
@@ -528,8 +530,8 @@ func TestCachedLLMProviderCachesIdenticalRequests(t *testing.T) {
 		if err != nil {
 			t.Fatalf("call %d: %v", i, err)
 		}
-		if reply != "hello" {
-			t.Errorf("call %d: unexpected reply %q", i, reply)
+		if reply.Content != "hello" {
+			t.Errorf("call %d: unexpected reply %q", i, reply.Content)
 		}
 	}
 	if inner.calls != 1 {

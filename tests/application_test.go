@@ -152,11 +152,11 @@ type fakeLLM struct {
 	lastMessages []domain.ChatMessage
 }
 
-func (f *fakeLLM) Chat(_ context.Context, cfg *domain.ChatConfig, messages []domain.ChatMessage) (string, error) {
+func (f *fakeLLM) Chat(_ context.Context, cfg *domain.ChatConfig, messages []domain.ChatMessage) (domain.LLMResult, error) {
 	f.called = true
 	f.lastCfg = cfg
 	f.lastMessages = messages
-	return f.reply, nil
+	return domain.LLMResult{Content: f.reply, Model: cfg.Model}, nil
 }
 
 func TestChatSendCallsLLMWithEnrichedMessages(t *testing.T) {
@@ -173,7 +173,7 @@ func TestChatSendCallsLLMWithEnrichedMessages(t *testing.T) {
 	ctx := context.Background()
 
 	history := []domain.ChatMessage{{Role: "user", Content: "previous"}}
-	messages, err := uc.Send(ctx, cfg.ID, history, "bonjour")
+	result, err := uc.Send(ctx, cfg.ID, history, "bonjour")
 	if err != nil {
 		t.Fatalf("send: %v", err)
 	}
@@ -185,12 +185,15 @@ func TestChatSendCallsLLMWithEnrichedMessages(t *testing.T) {
 		t.Errorf("expected config %s, got %s", cfg.ID, fake.lastCfg.ID)
 	}
 
-	if len(messages) != 3 {
-		t.Fatalf("expected 3 messages (user, user, assistant), got %d", len(messages))
+	if len(result.Messages) != 3 {
+		t.Fatalf("expected 3 messages (user, user, assistant), got %d", len(result.Messages))
 	}
-	last := messages[len(messages)-1]
+	last := result.Messages[len(result.Messages)-1]
 	if last.Role != "assistant" || last.Content != "ma réponse" {
 		t.Errorf("expected assistant reply, got %s:%s", last.Role, last.Content)
+	}
+	if result.Model != cfg.Model {
+		t.Errorf("expected served model %s, got %s", cfg.Model, result.Model)
 	}
 }
 
@@ -422,12 +425,12 @@ func TestChatSendTrimsOversizedHistory(t *testing.T) {
 	for i := range history {
 		history[i] = domain.ChatMessage{Role: "user", Content: fmt.Sprintf("m%d", i)}
 	}
-	messages, err := uc.Send(context.Background(), cfg.ID, history, "fin")
+	result, err := uc.Send(context.Background(), cfg.ID, history, "fin")
 	if err != nil {
 		t.Fatalf("send: %v", err)
 	}
-	if len(messages) > 42 {
-		t.Errorf("expected history truncated, got %d messages", len(messages))
+	if len(result.Messages) > 42 {
+		t.Errorf("expected history truncated, got %d messages", len(result.Messages))
 	}
 }
 

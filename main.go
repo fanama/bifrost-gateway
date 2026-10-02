@@ -102,9 +102,47 @@ func main() {
 
 	// Le chat doit voir l'etat le plus frais possible des configs, donc recoit
 	// le store non decoré ; seul l'appel provider est mis en cache.
+	//
+	// Ordre des decorateurs, du plus externe au plus interne :
+	//
+	//   cache -> routeur -> Bifrost
+	//
+	// Le cache doit entourer le routeur pour que la cle soit calculee sur la
+	// configuration active et qu'un hit evite a la fois l'appel au classifieur
+	// (~1 s) et l'echelle de bascule. Il memorise le modele qui a reellement
+	// repondu, donc un hit reste fidele.
+	//
+	// Le routeur doit entourer Bifrost et le classifieur doit appeler Bifrost
+	// directement : passer par le provider decoré ferait boucler le classifieur
+	// sur lui-meme.
 	var llmProvider domain.LLMProvider = bifrostProvider
+
+	if cfg.Routing.Enabled {
+		// Quand le routeur escalade vers un autre tier, il change de provider :
+		// les reessais internes de Bifrost feraient doublonner le travail de
+		// l'echelle de bascule.
+		bifrostProvider.SetMaxRetries(cfg.Routing.MaxRetries)
+
+		classifier := infrastructure.NewLocalClassifier(bifrostProvider, cfg.Routing.Classifier)
+		llmProvider = infrastructure.NewRoutingLLMProvider(
+			bifrostProvider,
+			classifier,
+			configStore,
+			providerStore,
+			infrastructure.RoutingOptions{
+				MinConfidence: cfg.Routing.NormalizedMinConfidence(0.6),
+				Cooldown:      cfg.Routing.CooldownTTL(60 * time.Second),
+				MaxAttempts:   cfg.Routing.MaxAttempts,
+			},
+		)
+		log.Printf("Routing enabled: tiers=%s, min_confidence=%.2f, cooldown=%s",
+			strings.Join(domain.TierOptions(), ">"),
+			cfg.Routing.NormalizedMinConfidence(0.6),
+			cfg.Routing.CooldownTTL(60*time.Second))
+	}
+
 	if cfg.Cache.LLMResponse.Enabled {
-		llmProvider = infrastructure.NewCachedLLMProvider(bifrostProvider, llmCache, cfg.Cache.LLMResponse.CacheTTL(5*time.Minute))
+		llmProvider = infrastructure.NewCachedLLMProvider(llmProvider, llmCache, cfg.Cache.LLMResponse.CacheTTL(5*time.Minute))
 	}
 
 	enrichmentService := domain.NewEnrichmentService()

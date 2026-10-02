@@ -112,8 +112,11 @@
 <dialog id="config-form-zone" class="card">
   <h3 style="margin-top:0">{{if .IsCreate}}Nouvelle configuration{{else}}Modifier : {{.Editing.Name}}{{end}}</h3>
 
+  <!-- Le garde `event.target===this` est indispensable : htmx:afterRequest remonte
+       (bubble) depuis les hx-get enfants (refresh des modeles au changement de
+       provider) et fermerait la modale a chaque changement de provider. -->
   <form hx-post="{{.Action}}" hx-target="#project-configs-section" hx-swap="innerHTML"
-        hx-on::after-request="if(event.detail.successful){this.closest('dialog').close()}">
+        hx-on::after-request="if(event.detail.successful && event.target===this){this.closest('dialog').close()}">
     <div class="grid2">
       <label>Nom
         <input name="name" placeholder="ex : Ollama local" value="{{if not .IsCreate}}{{.Editing.Name}}{{end}}" required>
@@ -163,6 +166,19 @@
             <option value="" {{if .IsCreate}}selected{{else}}{{if eq .Editing.ResponseFormat ""}}selected{{end}}{{end}}>aucun</option>
             <option value="text" {{if not .IsCreate}}{{if eq .Editing.ResponseFormat "text"}}selected{{end}}{{end}}>texte</option>
             <option value="json_object" {{if not .IsCreate}}{{if eq .Editing.ResponseFormat "json_object"}}selected{{end}}{{end}}>JSON strict</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>Tier de routage
+            <select name="tier">
+              <option value="" {{if .IsCreate}}selected{{else}}{{if eq .Editing.Tier ""}}selected{{end}}{{end}}>aucun (hors routage)</option>
+              <option value="fast" {{if not .IsCreate}}{{if eq .Editing.Tier "fast"}}selected{{end}}{{end}}>fast — simple, factuel, économique</option>
+              <option value="balanced" {{if not .IsCreate}}{{if eq .Editing.Tier "balanced"}}selected{{end}}{{end}}>balanced — raisonnement, code, analyse</option>
+              <option value="frontier" {{if not .IsCreate}}{{if eq .Editing.Tier "frontier"}}selected{{end}}{{end}}>frontier — conception, maths, long contexte</option>
+            </select>
+            <small>Le routeur part du tier le plus bas estimé suffisant pour la conversation, puis monte d'un cran si le fournisseur sature. « aucun » exclut la configuration de l'échelle.</small>
+          </label>
           </select>
         </label>
         <label>Frequency Penalty

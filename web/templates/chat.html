@@ -235,4 +235,7 @@ document.addEventListener('htmx:afterSwap', function(evt) {
 {{else}}
 {{template "chat_placeholder" .}}
 {{end}}
+{{if .ServedModel}}
+<div class="chat-served-model">Réponse produite par <strong>{{.ServedModel}}</strong>{{if ne .ServedModel .RequestedModel}} <span class="hint">(routage automatique ; configuration sélectionnée : {{.RequestedModel}})</span>{{end}}</div>
+{{end}}
 {{end}}

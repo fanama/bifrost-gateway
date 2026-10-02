@@ -48,6 +48,29 @@ func (c *BifrostClient) ChatCompletion(
 	return resp, nil
 }
 
+// ProviderError conserve les champs structurants d'un echec provider.
+//
+// L'adaptateur doit pouvoir decider si un echec merite une bascule vers un
+// autre modele, ce qui impose de lire le code HTTP et le code fournisseur sans
+// analyser une chaine. Le rendu textuel reste identique a celui historique pour
+// que les messages de l'UI ne changent pas.
+type ProviderError struct {
+	StatusCode int
+	Code       string
+	Message    string
+	Detail     string
+}
+
+func (e *ProviderError) Error() string {
+	if e.Detail != "" {
+		return fmt.Sprintf("bifrost error: %s: %s", e.Message, e.Detail)
+	}
+	if e.StatusCode != 0 {
+		return fmt.Sprintf("bifrost error: %s (HTTP %d)", e.Message, e.StatusCode)
+	}
+	return fmt.Sprintf("bifrost error: %s", e.Message)
+}
+
 // formatBifrostError renders a BifrostError into something actionable. The SDK
 // collapses a whole class of failures into a generic message ("HTML response
 // received from provider"), so the HTTP status and a short excerpt of the body
@@ -58,6 +81,11 @@ func formatBifrostError(bifrostErr *schemas.BifrostError) error {
 		msg = bifrostErr.Error.Message
 	}
 
+	var code string
+	if bifrostErr.Error != nil && bifrostErr.Error.Code != nil {
+		code = strings.TrimSpace(*bifrostErr.Error.Code)
+	}
+
 	var detail string
 	if bifrostErr.Error != nil && bifrostErr.Error.Error != nil {
 		detail = strings.TrimSpace(bifrostErr.Error.Error.Error())
@@ -65,13 +93,12 @@ func formatBifrostError(bifrostErr *schemas.BifrostError) error {
 	if detail == "" {
 		detail = rawResponseExcerpt(bifrostErr.ExtraFields.RawResponse)
 	}
-	if detail = excerpt(detail, 200); detail != "" {
-		return fmt.Errorf("bifrost error: %s: %s", msg, detail)
+
+	out := &ProviderError{Message: msg, Detail: excerpt(detail, 200), Code: code}
+	if bifrostErr.StatusCode != nil {
+		out.StatusCode = *bifrostErr.StatusCode
 	}
-	if bifrostErr.StatusCode != nil && *bifrostErr.StatusCode != 0 {
-		return fmt.Errorf("bifrost error: %s (HTTP %d)", msg, *bifrostErr.StatusCode)
-	}
-	return fmt.Errorf("bifrost error: %s", msg)
+	return out
 }
 
 func rawResponseExcerpt(raw any) string {

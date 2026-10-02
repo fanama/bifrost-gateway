@@ -23,20 +23,33 @@ func NewChatUseCase(
 
 const maxHistory = 40
 
+// ChatResult porte l'historique complete de la conversation et le modele qui a
+// reellement produit la reponse.
+//
+// Model est distinct du modele de la configuration demandee : le routeur peut
+// avoir substitue un autre tier, et l'appelant doit pouvoir l'annoncer.
+type ChatResult struct {
+	Messages []domain.ChatMessage
+	// Model est le modele qui a reellement repondu, RequestedModel celui de la
+	// configuration demandee. Ils different des que le routeur substitue un tier.
+	Model          string
+	RequestedModel string
+}
+
 func (u *ChatUseCase) Send(
 	ctx context.Context,
 	cfgID string,
 	history []domain.ChatMessage,
 	message string,
-) ([]domain.ChatMessage, error) {
+) (ChatResult, error) {
 	cfg, err := u.configs.Get(ctx, cfgID)
 	if err != nil {
-		return nil, err
+		return ChatResult{}, err
 	}
 
 	message = strings.TrimSpace(message)
 	if message == "" {
-		return nil, &domain.ValidationError{Fields: []string{"message"}}
+		return ChatResult{}, &domain.ValidationError{Fields: []string{"message"}}
 	}
 
 	if len(history) > maxHistory {
@@ -61,13 +74,17 @@ func (u *ChatUseCase) Send(
 
 	enriched, err := u.enrich.Enrich(req)
 	if err != nil {
-		return nil, err
+		return ChatResult{}, err
 	}
 
 	reply, err := u.llm.Chat(ctx, cfg, enriched.Messages)
 	if err != nil {
-		return nil, err
+		return ChatResult{}, err
 	}
 
-	return append(messages, domain.ChatMessage{Role: "assistant", Content: reply}), nil
+	return ChatResult{
+		Messages:       append(messages, domain.ChatMessage{Role: "assistant", Content: reply.Content}),
+		Model:          reply.Model,
+		RequestedModel: cfg.Model,
+	}, nil
 }
