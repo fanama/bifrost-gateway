@@ -161,9 +161,10 @@ func main() {
 	modelUseCase := application.NewModelUseCase(gatewayModels(cfg), uiConfigStore, catalogStore)
 	providerUseCase := application.NewProviderUseCase(providerStore)
 	catalogUseCase := application.NewModelCatalogUseCase(catalogStore)
+	modelsHandler := handlers.NewModelsHandler(authUseCase, modelUseCase)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/v1/chat/completions", chatHandler.HandleChatCompletion)
+	handlers.RegisterRoutes(mux, chatHandler, modelsHandler)
 	mux.HandleFunc("/chat/completions", chatHandler.HandleChatCompletion)
 	mux.HandleFunc("/health/liveness", chatHandler.HandleHealth)
 	mux.HandleFunc("/health/readiness", chatHandler.HandleHealth)

@@ -161,12 +161,96 @@
           <input name="max_tokens" type="number" step="1" min="1" placeholder="ex: 1024"
                  value="{{if .UseDefaults}}1024{{else}}{{i .Editing.MaxTokens}}{{end}}">
         </label>
-        <label>Response Format
+        <label>Format de reponse
           <select name="response_format">
-            <option value="" {{if .IsCreate}}selected{{else}}{{if eq .Editing.ResponseFormat ""}}selected{{end}}{{end}}>aucun</option>
-            <option value="text" {{if not .IsCreate}}{{if eq .Editing.ResponseFormat "text"}}selected{{end}}{{end}}>texte</option>
-            <option value="json_object" {{if not .IsCreate}}{{if eq .Editing.ResponseFormat "json_object"}}selected{{end}}{{end}}>JSON strict</option>
+            <option value="" {{if .IsCreate}}selected{{else}}{{if eq .EditingFormat ""}}selected{{end}}{{end}}>aucun</option>
+            <option value="text" {{if not .IsCreate}}{{if eq .EditingFormat "text"}}selected{{end}}{{end}}>texte</option>
+            <option value="json_object" {{if not .IsCreate}}{{if eq .EditingFormat "json_object"}}selected{{end}}{{end}}>JSON valide (sans schema)</option>
+            <option value="json_schema" {{if not .IsCreate}}{{if eq .EditingFormat "json_schema"}}selected{{end}}{{end}}>JSON guide par un schema</option>
           </select>
+        </label>
+        </div>
+
+        <div class="field schema-builder">
+          <label>Schema de reponse
+            <span class="hint"> utilized uniquement par le format « JSON guide par un schema ». Tous les champs marques obligatoires sont requis ; le mode strict n'est annonce que dans ce cas, car OpenAI l'exige.</span>
+          </label>
+          <div class="schema-table-wrap">
+            <table class="schema-rows">
+              <thead>
+                <tr>
+                  <th>Champ</th><th>Type</th><th>Description</th>
+                  <th>Valeurs possibles</th>
+                  <th title="longueur minimale (texte) ou borne minimale (nombre)">Min</th>
+                  <th title="longueur maximale (texte) ou borne maximale (nombre)">Max</th>
+                  <th>Motif</th>
+                  <th>Type des elements</th>
+                  <th>Obligatoire</th><th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {{range .SchemaFields}}
+                <tr>
+                  <td><input name="schema_field_name[]" value="{{.Name}}" placeholder="ex: ville"></td>
+                  <td>
+                    <select name="schema_field_type[]" data-role="type">
+                      {{$current := .Type}}
+                      {{range $t := $.SchemaFieldTypes}}<option value="{{$t}}" {{if eq $t $current}}selected{{end}}>{{$t}}</option>{{end}}
+                    </select>
+                  </td>
+                  <td><input name="schema_field_description[]" value="{{.Description}}" placeholder="ex: nom de la ville"></td>
+                  <td><input name="schema_field_enum[]" value="{{.Enum}}" placeholder="a, b, c"></td>
+                  <td><input name="schema_field_min[]" value="{{.Min}}" placeholder="0" inputmode="numeric"></td>
+                  <td><input name="schema_field_max[]" value="{{.Max}}" placeholder="0" inputmode="numeric"></td>
+                  <td><input name="schema_field_pattern[]" value="{{.Pattern}}" placeholder="^[A-Z]"></td>
+                  <td>
+                    <select name="schema_field_items[]">
+                      <option value="" {{if eq .ItemsType ""}}selected{{end}}>-</option>
+                      {{$items := .ItemsType}}
+                      {{range $t := $.SchemaFieldTypes}}<option value="{{$t}}" {{if eq $t $items}}selected{{end}}>{{$t}}</option>{{end}}
+                    </select>
+                  </td>
+                  <td class="center"><input type="checkbox" name="schema_field_required[]" value="{{.Index}}" data-role="required" {{if .Required}}checked{{end}}></td>
+                  <td class="center"><button type="button" class="btn small danger" data-role="remove-row" title="Supprimer ce champ">&times;</button></td>
+                </tr>
+                {{end}}
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Le gabarit permet d'ajouter un champ sans recharger la page. Les
+               noms sont des tableaux "nom[]" : l'ordre du DOM donne l'ordre des
+               lignes cote serveur, ce qui dispense d'entretenir un index. -->
+          <template id="schema-row-template">
+            <tr>
+              <td><input name="schema_field_name[]" placeholder="ex: ville"></td>
+              <td>
+                <select name="schema_field_type[]" data-role="type">
+                  {{range $t := $.SchemaFieldTypes}}<option value="{{$t}}" {{if eq $t "string"}}selected{{end}}>{{$t}}</option>{{end}}
+                </select>
+              </td>
+              <td><input name="schema_field_description[]" placeholder="ex: nom de la ville"></td>
+              <td><input name="schema_field_enum[]" placeholder="a, b, c"></td>
+              <td><input name="schema_field_min[]" placeholder="0" inputmode="numeric"></td>
+              <td><input name="schema_field_max[]" placeholder="0" inputmode="numeric"></td>
+              <td><input name="schema_field_pattern[]" placeholder="^[A-Z]"></td>
+              <td>
+                <select name="schema_field_items[]">
+                  <option value="" selected>-</option>
+                  {{range $t := $.SchemaFieldTypes}}<option value="{{$t}}">{{$t}}</option>{{end}}
+                </select>
+              </td>
+              <td class="center"><input type="checkbox" name="schema_field_required[]" data-role="required"></td>
+              <td class="center"><button type="button" class="btn small danger" data-role="remove-row" title="Supprimer ce champ">&times;</button></td>
+            </tr>
+          </template>
+
+          <button type="button" class="btn small" id="schema-add-field">+ Ajouter un champ</button>
+          <div class="schema-preview">
+            <label>Schema JSON <span class="hint">(remplir ce champ remplace le constructeur)</span>
+              <textarea name="response_schema" rows="8" placeholder='{"type":"object","properties":{...}}'>{{.ResponseSchema}}</textarea>
+            </label>
+          </div>
         </div>
 
         <div class="field">

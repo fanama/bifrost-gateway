@@ -41,15 +41,72 @@ func (u *ChatUseCase) Send(
 	cfgID string,
 	history []domain.ChatMessage,
 	message string,
+	opts *domain.RequestOptions,
 ) (ChatResult, error) {
-	cfg, err := u.configs.Get(ctx, cfgID)
+	cfg, messages, enriched, err := u.prepare(ctx, cfgID, history, message, opts)
 	if err != nil {
 		return ChatResult{}, err
 	}
 
+	reply, err := u.llm.Chat(ctx, cfg, enriched)
+	if err != nil {
+		return ChatResult{}, err
+	}
+
+	return ChatResult{
+		Messages:       append(messages, domain.ChatMessage{Role: "assistant", Content: reply.Content}),
+		Model:          reply.Model,
+		RequestedModel: cfg.Model,
+	}, nil
+}
+
+// Stream rend la meme reponse que Send mais fragment par fragment.
+//
+// Le modele reellement utilise est porte par les fragments eux-memes, car il
+// n'est connu qu'une fois le premier recus : il peut differer de cfg.Model si le
+// routeur a substitue un tier.
+func (u *ChatUseCase) Stream(
+	ctx context.Context,
+	cfgID string,
+	history []domain.ChatMessage,
+	message string,
+	opts *domain.RequestOptions,
+) (<-chan domain.StreamEvent, error) {
+	cfg, _, enriched, err := u.prepare(ctx, cfgID, history, message, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	return domain.StreamFrom(ctx, u.llm, cfg, enriched)
+}
+
+// prepare factorise la partie commune a Send et Stream : resolution de la
+// configuration, validation du message, fenetre d'historique et enrichissement.
+// Les deux chemins doivent envoyer exactement la meme conversation au provider,
+// sinon un meme prompt repondrait differemment selon le mode.
+func (u *ChatUseCase) prepare(
+	ctx context.Context,
+	cfgID string,
+	history []domain.ChatMessage,
+	message string,
+	opts *domain.RequestOptions,
+) (*domain.ChatConfig, []domain.ChatMessage, []domain.ChatMessage, error) {
+	stored, err := u.configs.Get(ctx, cfgID)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	// La surcharge est appliquee sur une copie : la configuration en base n'est
+	// jamais modifiee par un appel, et le provider ne voit toujours qu'un
+	// ChatConfig, surcharge comprise.
+	cfg, err := opts.Apply(stored)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
 	message = strings.TrimSpace(message)
 	if message == "" {
-		return ChatResult{}, &domain.ValidationError{Fields: []string{"message"}}
+		return nil, nil, nil, &domain.ValidationError{Fields: []string{"message"}}
 	}
 
 	if len(history) > maxHistory {
@@ -74,17 +131,8 @@ func (u *ChatUseCase) Send(
 
 	enriched, err := u.enrich.Enrich(req)
 	if err != nil {
-		return ChatResult{}, err
+		return nil, nil, nil, err
 	}
 
-	reply, err := u.llm.Chat(ctx, cfg, enriched.Messages)
-	if err != nil {
-		return ChatResult{}, err
-	}
-
-	return ChatResult{
-		Messages:       append(messages, domain.ChatMessage{Role: "assistant", Content: reply.Content}),
-		Model:          reply.Model,
-		RequestedModel: cfg.Model,
-	}, nil
+	return cfg, messages, enriched.Messages, nil
 }

@@ -116,7 +116,7 @@ gteway-local/
 * **`application/` (Cas d'Usage)** : Orchestration des regles metier via les portes d'entree. Depend UNIQUEMENT des interfaces `domain` (inversion de dependance).
 * **`infrastructure/` (Adaptateurs)** : Implantations concrètes des interfaces `domain` : client BifrostAI, store JSON file-based, comptes providers dynamiques.
 * **`web/` (Delivery)** : Handlers HTTP + templates HTMX embarques (`go:embed`). Routing Go 1.22 (`GET /models`, `POST /configs/{id}`, etc.).
-* **`handlers/` (API)** : API compatible OpenAI (`/v1/chat/completions`), health checks, gestion d'erreurs.
+* **`handlers/` (API)** : API compatible OpenAI (`/v1/chat/completions` y compris en SSE, `/v1/models`), health checks, gestion d'erreurs. Le routage `/v1` est centralise dans `handlers.RegisterRoutes`, partage entre `main.go` et les tests de contrat. Le streaming est dans `handlers/stream.go`, la reponse unique dans `chat.go`.
 
 ---
 
@@ -355,8 +355,9 @@ curl -X POST 'http://localhost:4000/v1/chat/completions' \
 
 ```json
 {
-    "id": "cmpl-bridge-gateway",
+    "id": "chatcmpl-83d6a3332f460d947812b535",
     "object": "chat.completion",
+    "created": 1791195410,
     "model": "gemma4:e4b",
     "choices": [
         {
@@ -364,9 +365,169 @@ curl -X POST 'http://localhost:4000/v1/chat/completions' \
             "message": {"role": "assistant", "content": "Enriched request processed..."},
             "finish_reason": "stop"
         }
-    ]
+    ],
+    "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 }
 ```
+
+### Routes de l'API standard OpenAI
+
+| Methode | Chemin | Role |
+| --- | --- | --- |
+| `POST` | `/v1/chat/completions` | Completion de chat (auth `Bearer`) |
+| `GET` | `/v1/models` | Liste des modeles connus |
+| `GET` | `/v1/models/{model}` | Detail d'un modele, insensible a la casse |
+
+Les trois routes exigent une cle. Toute autre route `/v1/...` repond `404` avec
+l'enveloppe d'erreur OpenAI, et non le texte brut de `net/http` :
+
+```bash
+curl http://localhost:4000/v1/models -H 'Authorization: Bearer sk-bridge-XXXX'
+# {"object":"list","data":[{"id":"gemma4:e4b","object":"model","created":1791195330,"owned_by":"ollama"}]}
+
+curl -X POST http://localhost:4000/v1/embeddings -d '{}'
+# {"error":{"code":"invalid_url","message":"Invalid URL (POST /v1/embeddings)","param":null,"type":"invalid_request_error"}}
+```
+
+Les erreurs suivent le paquet `error` d'OpenAI (`message`, `type`, `param`, `code`).
+
+### Streaming
+
+`"stream": true` bascule la meme route en SSE (`text/event-stream`), sans
+`/v1/chat/completions/stream` ni autre chemin : c'est le comportement attendu par
+les SDK.
+
+```bash
+curl -N -X POST 'http://localhost:4000/v1/chat/completions' \
+-H 'Content-Type: application/json' \
+-H 'Authorization: Bearer sk-bridge-XXXX' \
+-d '{"model":"gemma4:e4b","stream":true,"messages":[{"role":"user","content":"Raconte une histoire."}]}'
+```
+
+La sequence des trames est celle d'OpenAI : une trame portant le role
+`assistant`, une trame par increment de texte, une trame de fin avec
+`finish_reason: "stop"`, puis `data: [DONE]`. Toutes les trames partagent le meme
+`id` et le meme `created`.
+
+`stream_options.include_usage` ajoute, juste avant `[DONE]`, une trame de
+consommation avec `choices` vide, comme chez OpenAI :
+
+```json
+{"id":"chatcmpl-…","object":"chat.completion.chunk","created":1791196744,
+ "model":"gemma4:e4b","choices":[],
+ "usage":{"prompt_tokens":10,"completion_tokens":10,"total_tokens":20}}
+```
+
+Le streaming traverse toute la chaine (cache, routeur, Bifrost) :
+
+* **cache** : un hit est redonne en un seul fragment, un miss est streamed puis
+  memorise. Une reponse interrompue n'est jamais memorisee ;
+* **routeur** : la bascule vers un tier superieur n'est possible que tant que le
+  client n'a recu aucun fragment. Au-dela, une coupure lui est annoncee dans une
+  trame d'erreur, car le texte est deja chez lui ;
+* **provider non streame** : la reponse est redonnee en un seul fragment, donc
+  toujours en SSE valide.
+
+Verifier avec le SDK officiel :
+
+```python
+from openai import OpenAI
+client = OpenAI(base_url="http://localhost:4000/v1", api_key="sk-bridge-XXXX")
+for chunk in client.chat.completions.create(model="gemma4:e4b", messages=[...], stream=True):
+    print(chunk.choices[0].delta.content or "", end="", flush=True)
+```
+
+### Sortie structuree (JSON mode et schemas)
+
+Le format de reponse se configure dans la configuration du projet, et une
+requete peut le surcharger. **La requete l'emporte toujours**, comme chez OpenAI.
+
+Trois formats sont acceptes, et `json_schema` exige un schema :
+
+```bash
+# schema transmis par la requete
+curl -X POST 'http://localhost:4000/v1/chat/completions' \
+-H 'Authorization: Bearer sk-bridge-XXXX' \
+-H 'Content-Type: application/json' \
+-d '{
+  "messages": [{"role":"user","content":"Ville et population"}],
+  "response_format": {
+    "type": "json_schema",
+    "json_schema": {
+      "name": "ville",
+      "schema": {
+        "type": "object",
+        "properties": {"ville": {"type":"string"}, "population": {"type":"integer"}},
+        "required": ["ville","population"],
+        "additionalProperties": false
+      }
+    }
+  }
+}'
+
+# JSON valide, sans schema : {"type":"json_object"}
+-d '{"messages":[...],"response_format":{"type":"json_object"}}'
+```
+
+La surcharge vaut aussi pour `temperature`, `top_p`, `max_tokens`,
+`max_completion_tokens`, `frequency_penalty` et `presence_penalty`. Elle est
+appliquee sur une copie de la configuration : la configuration enregistree n'est
+jamais modifiee par un appel, et le modele n'est jamais surcharge.
+
+Un `response_format` invalide (type inconnu, schema manquant ou schema qui n'est
+pas un objet) est refuse en `400` avec `param: "response_format"`.
+
+**Constructeur visuel.** Le formulaire de configuration expose un constructeur de
+schema : on declare les champs, et le serveur produit le JSON Schema qui sera
+envoye au provider.
+
+Le tableau accepte **autant de lignes que necessaire** — le bouton « Ajouter un
+champ » en clone une ligne du `<template>`, chaque ligne a son bouton de
+suppression, et la numerotation est recalculee apres chaque ajout ou retrait
+(appariement de la case « obligatoire » par position de ligne). La logique vit
+dans le layout, en delegation sur `document`, donc elle survit aux swaps htmx :
+le `<template>` est reconstruit a chaque rechargement de la section, et les
+lignes deja saisies sont relues a l'edition.
+
+Colonnes disponibles par champ :
+
+| Colonne        | Effet sur le schema                          |
+| -------------- | -------------------------------------------- |
+| Nom            | nom de la propriete                          |
+| Type           | `string`, `number`, `integer`, `boolean`, `object`, `array` |
+| Description    | `description`                                |
+| Obligatoire    | entre dans `required`                        |
+| Valeurs        | `enum` (liste separee par des virgules)      |
+| Min / Max      | `minLength`/`maxLength` (chaine) ou `minimum`/`maximum` (nombre), selon le type |
+| Motif          | `pattern` (chaine)                           |
+| Type d'element | `items.type` (tableau ; `string` par defaut) |
+
+Les contraintes ne sont ajoutees que si elles sont saisies, et une contrainte qui
+ne correspond pas au type du champ est ignoreee plutot que rejetee : changer le
+type d'un champ ne doit pas faire echouer la sauvegarde. Un schema dont la
+construction est invalide n'est pas enregistre, la validation de la
+configuration signalant alors que `json_schema` exige un schema.
+
+La textarea « Schema JSON » permet de saisir directement un schema que le
+constructeur n'exprime pas (imbrication, unions, `oneOf`) ; **elle est
+prioritaire** quand elle est remplie.
+
+Les deux chemins convergent vers le meme schema : construit depuis le formulaire,
+stocke dans la configuration, ou fourni directement dans le `response_format`
+d'une requete API.
+
+> **Un schema enregistre vaut declaration d'intention.** Si la configuration
+> porte un `response_schema` mais que le select « Format de reponse » est laisse
+> sur « aucun », le format effectif est **deduit** comme `json_schema` : le
+> schema est alors reellement transmis au provider. Le formulaire affiche
+> egalement la valeur effective a l'edition, pour ne pas laisser croire que le
+> schema est ignore. Un format choisi explicitement (`text`, `json_object`)
+> reste prioritaire — la deduction ne s'applique qu'en l'absence de format.
+
+> **Mode strict.** OpenAI impose qu'en mode `strict` *tous* les champs declares
+> soient requis. Le champ `strict` n'est donc annonce que si c'est vrai du schema
+> : un schema comportant un champ facultatif est envoye avec `strict: false`,
+> plutot que d'etre refuse par le provider.
 
 ### Health Check
 

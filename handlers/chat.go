@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -39,25 +41,34 @@ func (h *ChatHandler) HandleChatCompletion(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if req.Stream {
-		writeError(w, http.StatusBadRequest, "streaming is not supported")
-		return
-	}
-
 	authResult, err := h.auth.Authenticate(r.Context(), r.Header.Get("Authorization"))
 	if err != nil {
-		writeError(w, http.StatusUnauthorized, "invalid or missing API key")
+		writeAPIError(w, http.StatusUnauthorized, errTypeAuthentication, "", codeInvalidAPIKey, "invalid or missing API key")
 		return
 	}
 
+	// Le mode est decide apres l'authentification : une cle invalide doit
+	// toujours produire un 401, jamais un flux de donnees.
 	if authResult.Scope == "master" {
+		if req.Stream {
+			h.handleMasterStream(w, r, &req)
+			return
+		}
 		h.handleMasterRequest(w, r, &req)
+		return
+	}
+	if req.Stream {
+		h.handleProjectStream(w, r, &req, authResult.Project.ID)
 		return
 	}
 	h.handleProjectRequest(w, r, &req, authResult.Project.ID)
 }
 
 func (h *ChatHandler) handleMasterRequest(w http.ResponseWriter, _ *http.Request, req *domain.ChatRequest) {
+	if !validMessages(w, req) {
+		return
+	}
+
 	enriched, err := h.enrichment.Enrich(req)
 	if err != nil {
 		var missingErr *domain.MissingAttributionError
@@ -86,20 +97,15 @@ func (h *ChatHandler) handleProjectRequest(w http.ResponseWriter, r *http.Reques
 
 	messages := req.Messages
 	if len(messages) == 0 {
-		writeError(w, http.StatusBadRequest, "messages is required")
+		writeAPIError(w, http.StatusBadRequest, errTypeInvalidRequest, "messages", "", "messages is required")
 		return
 	}
 	history := messages[:len(messages)-1]
 	last := messages[len(messages)-1]
 
-	result, err := h.chat.Send(r.Context(), cfg.ID, history, last.Content)
+	result, err := h.chat.Send(r.Context(), cfg.ID, history, last.Content, domain.OptionsFrom(req))
 	if err != nil {
-		var missingErr *domain.MissingAttributionError
-		if errors.As(err, &missingErr) {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeChatError(w, err)
 		return
 	}
 
@@ -115,7 +121,7 @@ func (h *ChatHandler) handleProjectRequest(w http.ResponseWriter, r *http.Reques
 func buildCompletionResponse(model, content string) ChatCompletionResponse {
 	promptTokens, completionTokens := estimateTokens(content)
 	return ChatCompletionResponse{
-		ID:      "cmpl-bridge-gateway",
+		ID:      newCompletionID(),
 		Object:  "chat.completion",
 		Created: time.Now().Unix(),
 		Model:   model,
@@ -176,9 +182,9 @@ func buildResponse(req *domain.EnrichedRequest) ChatCompletionResponse {
 	}
 
 	return ChatCompletionResponse{
-		ID:      "cmpl-bridge-gateway",
+		ID:      newCompletionID(),
 		Object:  "chat.completion",
-		Created: 0,
+		Created: time.Now().Unix(),
 		Model:   req.Model,
 		Choices: []Choice{
 			{
@@ -198,13 +204,92 @@ func buildResponse(req *domain.EnrichedRequest) ChatCompletionResponse {
 	}
 }
 
+// writeChatError traduit une erreur du cas d'usage en reponse HTTP.
+//
+// Une surcharge invalide (response_format inconnu, schema mal forme) vient de la
+// requete et doit donc etre un 400 param=response_format, pas une panne interne :
+// le client peut la corriger, et OpenAI la classe de la meme facon.
+func writeChatError(w http.ResponseWriter, err error) {
+	var invalid *domain.InvalidRequestError
+	if errors.As(err, &invalid) {
+		writeAPIError(w, http.StatusBadRequest, errTypeInvalidRequest, invalid.Param, "", invalid.Error())
+		return
+	}
+
+	var missingErr *domain.MissingAttributionError
+	if errors.As(err, &missingErr) {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeError(w, http.StatusInternalServerError, err.Error())
+}
+
+// validMessages verifie la presence de messages, comme le chemin cle de projet.
+//
+// Sans cette verification, une requete vide sur le chemin master renvoyait 200
+// et un flux SSE sans aucun texte : le client ne pouvait pas distinguer une
+// reponse legitement vide d'une requete mal formee. Les deux chemins, stream ou
+// non, repondent donc la meme erreur.
+func validMessages(w http.ResponseWriter, req *domain.ChatRequest) bool {
+	if len(req.Messages) > 0 {
+		return true
+	}
+	writeAPIError(w, http.StatusBadRequest, errTypeInvalidRequest, "messages", "", "messages is required")
+	return false
+}
+
+// newCompletionID fournit un identifiant unique par reponse, au format
+// "chatcmpl-<hex>" comme chez OpenAI. Un identifiant constant casse les clients
+// qui indexent leurs traces ou leur cache dessus. domain.NewID() n'est pas
+// reutilise ici : son prefixe "cfg-" est un detail interne qui n'a rien a
+// faire dans une reponse publique.
+func newCompletionID() string {
+	b := make([]byte, 12)
+	if _, err := rand.Read(b); err != nil {
+		return "chatcmpl-000000000000000000000000"
+	}
+	return "chatcmpl-" + hex.EncodeToString(b)
+}
+
+// Types d'erreur du paquet d'erreur OpenAI. Les clients OpenAI les attendent
+// tels quels dans le champ "type".
+const (
+	errTypeInvalidRequest = "invalid_request_error"
+	errTypeAuthentication = "authentication_error"
+	errTypeNotFound       = "not_found_error"
+)
+
+// Codes stables du champ "code", lus par plusieurs SDK.
+const (
+	codeInvalidAPIKey = "invalid_api_key"
+	codeInvalidURL    = "invalid_url"
+)
+
+// writeError conserve le comportement historique (400/500 sur une requete
+// malformee) en déléguant à l'enveloppe OpenAI standard.
 func writeError(w http.ResponseWriter, code int, message string) {
+	writeAPIError(w, code, errTypeInvalidRequest, "", "", message)
+}
+
+// writeAPIError écrit l'enveloppe d'erreur OpenAI : un objet "error" contenant
+// message, type, param et code. param et code valent null quand ils ne
+// s'appliquent pas, ce qui est la forme attendue par les SDK.
+func writeAPIError(w http.ResponseWriter, status int, errType, param, code, message string) {
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(code)
-	json.NewEncoder(w).Encode(map[string]any{
-		"error": map[string]string{
-			"message": message,
-			"type":    "invalid_request_error",
-		},
-	})
+	w.WriteHeader(status)
+
+	body := map[string]any{
+		"message": message,
+		"type":    errType,
+		"param":   nil,
+		"code":    nil,
+	}
+	if param != "" {
+		body["param"] = param
+	}
+	if code != "" {
+		body["code"] = code
+	}
+
+	json.NewEncoder(w).Encode(map[string]any{"error": body})
 }

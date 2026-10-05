@@ -127,3 +127,29 @@ func excerpt(s string, max int) string {
 	}
 	return collapsed[:max] + "..."
 }
+
+// ChatCompletionStream ouvre un flux de fragments aupres du provider. Le canal
+// rendu est ferme par Bifrost en fin de flux, comme en cas d'erreur.
+func (c *BifrostClient) ChatCompletionStream(
+	ctx context.Context,
+	provider schemas.ModelProvider,
+	model string,
+	messages []schemas.ChatMessage,
+	params *schemas.ChatParameters,
+) (chan *schemas.BifrostStreamChunk, error) {
+	req := &schemas.BifrostChatRequest{
+		Provider: provider,
+		Model:    model,
+		Input:    messages,
+		Params:   params,
+	}
+
+	chunks, bifrostErr := c.client.ChatCompletionStreamRequest(
+		schemas.NewBifrostContext(ctx, schemas.NoDeadline),
+		req,
+	)
+	if bifrostErr != nil {
+		return nil, formatBifrostError(bifrostErr)
+	}
+	return chunks, nil
+}

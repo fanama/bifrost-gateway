@@ -54,6 +54,14 @@ tr.active{background:rgba(34,197,94,.06)}
 .badge{display:inline-block;padding:2px 10px;border-radius:999px;background:var(--panel2);color:var(--muted);font-size:.74rem;font-weight:600}
 .badge.ok{background:rgba(34,197,94,.15);color:var(--ok)}
 .table-wrap{overflow-x:auto}
+/* Le constructeur compte dix colonnes : sans defilement horizontal, il deborde
+   du dialogue sur les ecrans etroits et les dernieres colonnes deviennent
+   inaccessibles. */
+.schema-table-wrap{overflow-x:auto;max-width:100%}
+.schema-rows th,.schema-rows td{white-space:nowrap}
+.schema-rows input[type=text],.schema-rows input:not([type]),.schema-rows select{min-width:90px}
+.schema-rows td:nth-child(3) input{min-width:150px}
+.schema-rows td:nth-child(7) input{min-width:110px}
 .toast{padding:12px 14px;border-radius:10px;margin-bottom:14px;font-size:.9rem}
 .toast.error{background:rgba(239,68,68,.12);border:1px solid var(--danger);color:var(--danger)}
 
@@ -130,6 +138,70 @@ tr.active{background:rgba(34,197,94,.06)}
 
 {{define "tail"}}
 </main>
+<script>
+// Constructeur de schema : ajout et suppression de champs.
+//
+// Tout passe par la delegation sur document, jamais par un ecouteur pose sur la
+// table : le bloc #project-configs-section est remplace integralement a chaque
+// activation, et un ecouteur attache a l'ancien DOM serait perdu.
+(function () {
+  function rowsOf(table) {
+    return Array.prototype.slice.call(table.tBodies[0].rows);
+  }
+
+  // Le serveur apparie la case "obligatoire" a une ligne par sa position dans le
+  // tableau ; renumeroter apres chaque ajout ou suppression est donc obligatoire.
+  function renumber(table) {
+    rowsOf(table).forEach(function (row, index) {
+      var box = row.querySelector('[data-role="required"]');
+      if (box) { box.value = String(index); }
+    });
+  }
+
+  function addRow(table) {
+    var template = document.getElementById('schema-row-template');
+    if (!template) { return; }
+    table.tBodies[0].appendChild(template.content.cloneNode(true));
+    renumber(table);
+    var rows = rowsOf(table);
+    var last = rows[rows.length - 1];
+    var name = last && last.querySelector('input[name="schema_field_name[]"]');
+    if (name) { name.focus(); }
+  }
+
+  function removeRow(row) {
+    var table = row.closest('table');
+    if (!table) { return; }
+    // Le schema exige au moins un champ : on ne descend jamais sous une ligne.
+    if (rowsOf(table).length <= 1) {
+      rowsOf(table)[0].querySelectorAll('input, select').forEach(function (el) {
+        if (el.type === 'checkbox') { el.checked = false; } else { el.value = ''; }
+      });
+      return;
+    }
+    row.remove();
+    renumber(table);
+  }
+
+  document.addEventListener('click', function (event) {
+    var target = event.target;
+    if (!target) { return; }
+
+    if (target.id === 'schema-add-field') {
+      event.preventDefault();
+      var table = target.closest('.schema-builder').querySelector('table.schema-rows');
+      if (table) { addRow(table); }
+      return;
+    }
+
+    var remove = target.closest('[data-role="remove-row"]');
+    if (remove) {
+      event.preventDefault();
+      removeRow(remove.closest('tr'));
+    }
+  });
+})();
+</script>
 </body>
 </html>
 {{end}}

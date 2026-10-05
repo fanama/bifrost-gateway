@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"sort"
 
 	"bridge-gateway/domain"
 )
@@ -31,9 +32,27 @@ func (s *ChatConfigStore) Seed(ctx context.Context, seeds []domain.ChatConfig) e
 	return s.Store().Seed(ctx, func() []domain.ChatConfig { return seeds })
 }
 
+// ListByProject rend les configurations d'un projet dans un ordre stable.
+//
+// L'ordre SQL ne peut pas servir : SetActive reecrit toute la table (DELETE puis
+// INSERT), ce qui regenere les rowid et fait sauter les lignes d'une action a
+// l'autre. Une liste qui se reordonne apres chaque clic est indesorientante --
+// on ne retrouve plus la ligne que l'on vient d'activer. Le tri est donc applique
+// ici, sur un critere qui survit a la reecriture : la date de creation, puis
+// l'identifiant comme departage.
 func (s *ChatConfigStore) ListByProject(ctx context.Context, projectID string) ([]domain.ChatConfig, error) {
 	// Pousse le filtre project_id jusqu'a l'index JSON au lieu de scanner la table.
-	return s.Store().WhereSQL(ctx, `json_extract(payload, '$.project_id') = ?`, projectID)
+	items, err := s.Store().WhereSQL(ctx, `json_extract(payload, '$.project_id') = ?`, projectID)
+	if err != nil {
+		return nil, err
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		if !items[i].CreatedAt.Equal(items[j].CreatedAt) {
+			return items[i].CreatedAt.Before(items[j].CreatedAt)
+		}
+		return items[i].ID < items[j].ID
+	})
+	return items, nil
 }
 
 func (s *ChatConfigStore) GetActiveByProject(ctx context.Context, projectID string) (*domain.ChatConfig, error) {

@@ -145,20 +145,136 @@ func (p *BifrostLLMProvider) Chat(ctx context.Context, cfg *domain.ChatConfig, m
 		return domain.LLMResult{}, err
 	}
 
-	bifrostMessages := make([]schemas.ChatMessage, 0, len(messages))
-	for _, m := range messages {
-		content := m.Content
-		bifrostMessages = append(bifrostMessages, schemas.ChatMessage{
-			Role:    schemas.ChatMessageRole(m.Role),
-			Content: &schemas.ChatMessageContent{ContentStr: &content},
-		})
-	}
-
-	resp, err := client.ChatCompletion(ctx, provider, cfg.Model, bifrostMessages, chatParams(cfg))
+	resp, err := client.ChatCompletion(ctx, provider, cfg.Model, toBifrostMessages(messages), chatParams(cfg))
 	if err != nil {
 		return domain.LLMResult{}, err
 	}
 	return domain.LLMResult{Content: ExtractAssistantContent(resp), Model: cfg.Model}, nil
+}
+
+var _ domain.StreamingLLMProvider = (*BifrostLLMProvider)(nil)
+
+// ChatStream est l'implementation reelle du streaming : elle pompe le canal de
+// Bifrost et le convertit en domain.StreamEvent.
+//
+// La conversion se fait dans une goroutine qui lit la source jusqu'a sa
+// fermeture et ferme toujours la sortie, y compris si le client abandonne : le
+// ctx est surveille pour ne pas laisser un flux ouvert apres une deconnexion.
+func (p *BifrostLLMProvider) ChatStream(ctx context.Context, cfg *domain.ChatConfig, messages []domain.ChatMessage) (<-chan domain.StreamEvent, error) {
+	provider, err := ToModelProvider(cfg.Provider)
+	if err != nil {
+		return nil, err
+	}
+
+	client, err := p.clientFor(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	source, err := client.ChatCompletionStream(ctx, provider, cfg.Model, toBifrostMessages(messages), chatParams(cfg))
+	if err != nil {
+		return nil, err
+	}
+
+	out := make(chan domain.StreamEvent)
+	go func() {
+		defer close(out)
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case chunk, ok := <-source:
+				if !ok {
+					// Le provider a fini : on termine le flux.
+					select {
+					case out <- domain.StreamEvent{Model: cfg.Model, Done: true}:
+					case <-ctx.Done():
+					}
+					return
+				}
+
+				if streamErr := streamChunkError(chunk); streamErr != nil {
+					// Une erreur de milieu de flux ne peut plus etre convertie en
+					// reponse HTTP : la seule chose qui reste correcte est de
+					// l'annoncer au client sous forme de trame SSE.
+					select {
+					case out <- domain.StreamEvent{Err: streamErr}:
+					case <-ctx.Done():
+					}
+					return
+				}
+
+				delta, role, ok := streamChunkDelta(chunk)
+				if !ok {
+					continue
+				}
+				select {
+				case out <- domain.StreamEvent{Delta: delta, Role: role, Model: cfg.Model}:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}
+	}()
+
+	return out, nil
+}
+
+// toBifrostMessages convertit les messages du domaine vers Bifrost. Partage par
+// Chat et ChatStream pour que les deux chemins envoient exactement le meme
+// payload au provider.
+func toBifrostMessages(messages []domain.ChatMessage) []schemas.ChatMessage {
+	out := make([]schemas.ChatMessage, 0, len(messages))
+	for _, m := range messages {
+		content := m.Content
+		out = append(out, schemas.ChatMessage{
+			Role:    schemas.ChatMessageRole(m.Role),
+			Content: &schemas.ChatMessageContent{ContentStr: &content},
+		})
+	}
+	return out
+}
+
+// streamChunkError rend l'erreur d'un fragment, ou nil si le fragment porte du
+// contenu. Bifrost transporte l'echec dans le meme canal que le contenu.
+func streamChunkError(chunk *schemas.BifrostStreamChunk) error {
+	if chunk == nil || chunk.BifrostError == nil {
+		return nil
+	}
+	return formatBifrostError(chunk.BifrostError)
+}
+
+// streamChunkDelta extrait le texte incremental d'un fragment. ok vaut false
+// quand le fragment ne porte rien d'utile : les providers emettent des
+// fragments vides (role seul, heartbeats) qui ne doivent pas produire de delta.
+func streamChunkDelta(chunk *schemas.BifrostStreamChunk) (delta, role string, ok bool) {
+	if chunk == nil || chunk.BifrostChatResponse == nil {
+		return "", "", false
+	}
+	choices := chunk.BifrostChatResponse.Choices
+	if len(choices) == 0 {
+		return "", "", false
+	}
+	streamChoice := choices[0].ChatStreamResponseChoice
+	if streamChoice == nil || streamChoice.Delta == nil {
+		return "", "", false
+	}
+
+	delta = ""
+	if streamChoice.Delta.Content != nil {
+		delta = *streamChoice.Delta.Content
+	}
+	if streamChoice.Delta.Role != nil {
+		role = *streamChoice.Delta.Role
+	}
+
+	// Un fragment qui ne porte ni texte ni role est un keepalive : le relayer
+	// produirait des choices vides chez le client.
+	if delta == "" && role == "" {
+		return "", "", false
+	}
+	return delta, role, true
 }
 
 func chatParams(cfg *domain.ChatConfig) *schemas.ChatParameters {

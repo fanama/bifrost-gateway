@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"bridge-gateway/domain"
@@ -97,7 +98,13 @@ func (p *CachedLLMProvider) cacheKey(cfg *domain.ChatConfig, messages []domain.C
 	writeField("temperature", fmt.Sprintf("%g", valueOrZero(cfg.Temperature)))
 	writeField("max_tokens", fmt.Sprintf("%d", valueOrZero(cfg.MaxTokens)))
 	writeField("system_prompt", cfg.SystemPrompt)
-	writeField("response_format", cfg.ResponseFormat)
+	// Le format est indexe avec le schema, et sur sa valeur effective : deux
+	// configurations qui demandent la meme sortie structuree mais avec des
+	// schemas differents ne doivent pas partager une entree de cache. Sans cela,
+	// une reponse conforme au schema A serait servie a une requete qui attend le
+	// schema B.
+	writeField("response_format", cfg.EffectiveResponseFormat())
+	writeField("response_schema", cfg.ResponseSchema)
 
 	for _, m := range messages {
 		writeField("role", m.Role)
@@ -119,3 +126,83 @@ func valueOrZero[T comparable](v *T) T {
 }
 
 var _ domain.LLMProvider = (*CachedLLMProvider)(nil)
+
+// ChatStream sert le cache de facon incremental.
+//
+// Un hit ne peut pas etre rejoue fragment par fragment : l'entree ne contient
+// que le texte final. Il est donc redonne en un seul fragment, ce qui reste une
+// reponse SSE valide. Un miss, lui, est streamed pour de vrai puis memorise a
+// la cloture, assemblee a partir des fragments.
+//
+// La cle est celle de Chat : une requete identique a ete servie par le meme
+// texte, donc la partager nintroduit aucune divergence.
+func (p *CachedLLMProvider) ChatStream(ctx context.Context, cfg *domain.ChatConfig, messages []domain.ChatMessage) (<-chan domain.StreamEvent, error) {
+	if p.ttl <= 0 {
+		return domain.StreamFrom(ctx, p.inner, cfg, messages)
+	}
+
+	key, err := p.cacheKey(cfg, messages)
+	if err != nil {
+		return domain.StreamFrom(ctx, p.inner, cfg, messages)
+	}
+
+	if raw, ok := p.cache.Get(key); ok {
+		var cached domain.LLMResult
+		if err := json.Unmarshal(raw, &cached); err == nil {
+			return domain.StreamViaFallback(cached, nil)
+		}
+	}
+
+	source, err := domain.StreamFrom(ctx, p.inner, cfg, messages)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make(chan domain.StreamEvent)
+	go func() {
+		defer close(out)
+
+		var assembled strings.Builder
+		for {
+			select {
+			case <-ctx.Done():
+				// Abandon du client : rien n'est memorise, une entree partielle
+				// serait servie a une requete ulterieure comme une reponse
+				// complete alors qu'elle est tronquee.
+				return
+			case event, ok := <-source:
+				if !ok {
+					return
+				}
+				if event.Err != nil {
+					// Reponse incomplete : elle ne doit jamais etre memorisee.
+					select {
+					case out <- event:
+					case <-ctx.Done():
+					}
+					return
+				}
+				assembled.WriteString(event.Delta)
+
+				select {
+				case out <- event:
+				case <-ctx.Done():
+					return
+				}
+
+				if event.Done {
+					// La reponse est complete : elle seule merite d'etre memorisee.
+					entry := domain.LLMResult{Content: assembled.String(), Model: event.Model}
+					if raw, err := json.Marshal(entry); err == nil {
+						p.cache.Set(key, raw, time.Duration(p.ttl)*time.Second)
+					}
+					return
+				}
+			}
+		}
+	}()
+
+	return out, nil
+}
+
+var _ domain.StreamingLLMProvider = (*CachedLLMProvider)(nil)

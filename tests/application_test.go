@@ -173,7 +173,7 @@ func TestChatSendCallsLLMWithEnrichedMessages(t *testing.T) {
 	ctx := context.Background()
 
 	history := []domain.ChatMessage{{Role: "user", Content: "previous"}}
-	result, err := uc.Send(ctx, cfg.ID, history, "bonjour")
+	result, err := uc.Send(ctx, cfg.ID, history, "bonjour", nil)
 	if err != nil {
 		t.Fatalf("send: %v", err)
 	}
@@ -302,7 +302,7 @@ func TestChatSendGivesConfigParamsToLLM(t *testing.T) {
 
 	fake := &fakeLLM{reply: "ok"}
 	_, err := application.NewChatUseCase(store, domain.NewEnrichmentService(), fake).Send(
-		context.Background(), cfg.ID, nil, "bonjour",
+		context.Background(), cfg.ID, nil, "bonjour", nil,
 	)
 	if err != nil {
 		t.Fatalf("send: %v", err)
@@ -338,7 +338,7 @@ func TestChatSendUsesSystemPromptAndFullParamsFromConfig(t *testing.T) {
 
 	fake := &fakeLLM{reply: `{"ok":true}`}
 	_, err := application.NewChatUseCase(store, domain.NewEnrichmentService(), fake).Send(
-		context.Background(), cfg.ID, nil, "qui es-tu ?",
+		context.Background(), cfg.ID, nil, "qui es-tu ?", nil,
 	)
 	if err != nil {
 		t.Fatalf("send: %v", err)
@@ -384,7 +384,7 @@ func TestChatSendUnknownConfigReturnsNotFound(t *testing.T) {
 
 	_, err := application.NewChatUseCase(
 		store, domain.NewEnrichmentService(), &fakeLLM{reply: "x"},
-	).Send(context.Background(), "cfg-inconnu", nil, "hi")
+	).Send(context.Background(), "cfg-inconnu", nil, "hi", nil)
 	if !errors.Is(err, domain.ErrConfigNotFound) {
 		t.Fatalf("expected ErrConfigNotFound, got %v", err)
 	}
@@ -400,7 +400,7 @@ func TestChatSendRejectsEmptyMessage(t *testing.T) {
 
 	_, err := application.NewChatUseCase(
 		store, domain.NewEnrichmentService(), &fakeLLM{},
-	).Send(context.Background(), cfg.ID, nil, "   ")
+	).Send(context.Background(), cfg.ID, nil, "   ", nil)
 	var verr *domain.ValidationError
 	if !errors.As(err, &verr) {
 		t.Fatalf("expected *ValidationError, got %T", err)
@@ -425,7 +425,7 @@ func TestChatSendTrimsOversizedHistory(t *testing.T) {
 	for i := range history {
 		history[i] = domain.ChatMessage{Role: "user", Content: fmt.Sprintf("m%d", i)}
 	}
-	result, err := uc.Send(context.Background(), cfg.ID, history, "fin")
+	result, err := uc.Send(context.Background(), cfg.ID, history, "fin", nil)
 	if err != nil {
 		t.Fatalf("send: %v", err)
 	}
@@ -468,3 +468,74 @@ func contains(list []string, s string) bool {
 }
 
 var _ = infrastructure.IsNotFound
+
+// SetActive reecrit toute la table, ce qui regenere les rowid. La liste des
+// configurations d'un projet doit rester dans le meme ordre avant et apres une
+// activation, faute de quoi l'interface fait sauter les lignes et l'utilisateur
+// ne retrouve plus celle qu'il vient d'activer.
+func TestListByProjectOrderSurvivesActivation(t *testing.T) {
+	ctx := context.Background()
+	store := NewTestStore(t)
+	uc := application.NewConfigUseCase(store)
+
+	projectID := NewTestProject(t)
+
+	var ids []string
+	// Quatre configurations : c'est a ce volume que l'ordre du plan JSON diverge
+	// de l'ordre des rowid et que le desordre devient observable.
+	for _, name := range []string{"Un", "Deux", "Trois", "Quatre"} {
+		cfg, err := uc.Create(ctx, &domain.ChatConfig{
+			ProjectID: projectID,
+			Name:      name,
+			Provider:  "ollama",
+			Model:     "gemma4:e4b",
+		})
+		if err != nil {
+			t.Fatalf("create %s: %v", name, err)
+		}
+		ids = append(ids, cfg.ID)
+	}
+
+	before, err := store.ListByProject(ctx, projectID)
+	if err != nil {
+		t.Fatalf("list before: %v", err)
+	}
+	if len(before) != 4 {
+		t.Fatalf("expected 4 configs, got %d", len(before))
+	}
+
+	// Activer la premiere : c'est l'ecriture qui reecrit la table, et c'est le
+	// cas ou la ligne active atterrit en dernier sans tri.
+	if _, err := uc.SetActive(ctx, projectID, ids[0]); err != nil {
+		t.Fatalf("set active: %v", err)
+	}
+
+	after, err := store.ListByProject(ctx, projectID)
+	if err != nil {
+		t.Fatalf("list after: %v", err)
+	}
+	if len(after) != 4 {
+		t.Fatalf("expected 4 configs, got %d", len(after))
+	}
+
+	for i := range before {
+		if before[i].ID != after[i].ID {
+			t.Fatalf("order changed at index %d: %q became %q (full before=%v after=%v)",
+				i, before[i].ID, after[i].ID, configIDs(before), configIDs(after))
+		}
+	}
+
+	// La ligne activee reste a sa place : c'est ce qui permet a l'utilisateur
+	// de retrouver ce qu'il vient de cliquer.
+	if !after[0].Active {
+		t.Errorf("the activated config must stay first and be active, got %+v", after[0])
+	}
+}
+
+func configIDs(items []domain.ChatConfig) []string {
+	out := make([]string, 0, len(items))
+	for _, c := range items {
+		out = append(out, c.Name)
+	}
+	return out
+}

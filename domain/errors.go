@@ -37,6 +37,18 @@ func (e *ValidationError) Error() string {
 	return fmt.Sprintf("Champ(s) invalide(s) %s : %s", joinFields(e.Fields), detail)
 }
 
+// InvalidRequestError signale un parametre de requete rejete, en distinguant le
+// champ fautif. Les handlers le traduisent en 400 param=..., la ou une
+// ValidationError concerne une configuration enregistree.
+type InvalidRequestError struct {
+	Param  string
+	Reason string
+}
+
+func (e *InvalidRequestError) Error() string {
+	return e.Reason
+}
+
 type MissingAttributionError struct {
 	MissingFields []string
 }
