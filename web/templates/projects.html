@@ -77,20 +77,15 @@
 {{template "tail" .}}
 <script>
 (function(){
-  var providerMap = {
-    {{range .Providers}}'{{.Name}}':{ baseURL: '{{.BaseURL}}', apiKey: '{{.APIKey}}' },
-    {{end}}
-  };
   document.addEventListener('change', function(e){
     if(e.target && e.target.id === 'cfg-provider'){
-      var p = providerMap[e.target.value] || { baseURL: '', apiKey: '' };
+      var opt = e.target.selectedOptions ? e.target.selectedOptions[0] : e.target.options[e.target.selectedIndex];
+      var baseURL = opt ? (opt.dataset.baseUrl || '') : '';
+      var apiKey = opt ? (opt.dataset.apiKey || '') : '';
       var url = document.getElementById('cfg-base-url');
-      if(url) url.value = p.baseURL || '';
+      if(url) url.value = baseURL;
       var key = document.getElementById('cfg-api-key');
-      if(key && (!key.value || key.dataset.autoFilled === 'true')) {
-        key.value = p.apiKey || '';
-        key.dataset.autoFilled = p.apiKey ? 'true' : 'false';
-      }
+      if(key) key.value = apiKey;
     }
   });
 })();
@@ -104,9 +99,14 @@
 {{template "configs_scoped_list" .}}
 {{end}}
 
-{{define "config_model_hints"}}
-{{range .}}<option value="{{.}}"></option>
-{{end}}{{end}}
+{{define "config_model_select"}}
+<select id="cfg-model" name="model" required>
+  <option value="" disabled {{if not .SelectedModel}}selected{{end}}>— choisir —</option>
+  {{range .Models}}
+  <option value="{{.}}" {{if eq $.SelectedModel .}}selected{{end}}>{{.}}</option>
+  {{end}}
+</select>
+{{end}}
 
 {{define "config_form"}}
 <dialog id="config-form-zone" class="card">
@@ -125,15 +125,15 @@
         <select id="cfg-provider" name="provider" required
                 hx-get="/projects/{{.ProjectID}}/configs/models"
                 hx-trigger="change"
-                hx-target="#cfg-models" hx-swap="outerHTML">
-          <option value="" disabled {{if .IsCreate}}selected{{end}}>— choisir —</option>
+                hx-target="#cfg-model" hx-swap="outerHTML">
+          <option value="" disabled {{if not .SelectedProvider}}selected{{end}}>— choisir —</option>
           {{range .Providers}}
-          <option value="{{.}}" {{if eq $.SelectedProvider .}}selected{{end}}>{{.}}</option>
+          <option value="{{.Name}}" data-base-url="{{.BaseURL}}" data-api-key="{{.APIKey}}" {{if eq $.SelectedProvider .Name}}selected{{end}}>{{.Name}}</option>
           {{end}}
         </select>
       </label>
       <label>Modele
-        <input name="model" list="cfg-models" placeholder="ex : gemma4:e4b" value="{{if not .IsCreate}}{{.Editing.Model}}{{end}}" required>
+        {{template "config_model_select" .}}
       </label>
       <label>Base URL
         <input name="base_url" id="cfg-base-url" placeholder="auto selon le provider (ex : https://api.mistral.ai)" value="{{if not .IsCreate}}{{.Editing.BaseURL}}{{end}}">
@@ -142,9 +142,6 @@
         <input name="api_key" id="cfg-api-key" type="password" placeholder="laisser vide pour cle provider ou Ollama" value="{{if not .IsCreate}}{{.Editing.APIKey}}{{end}}">
       </label>
     </div>
-    <datalist id="cfg-models">
-      {{template "config_model_hints" .ModelHints}}
-    </datalist>
 
     <details class="gen-params" {{if not .IsCreate}}open{{end}}>
       <summary>Parametres de generation</summary>
@@ -173,24 +170,23 @@
 
         <div class="field schema-builder">
           <label>Schema de reponse
-            <span class="hint"> utilized uniquement par le format « JSON guide par un schema ». Tous les champs marques obligatoires sont requis ; le mode strict n'est annonce que dans ce cas, car OpenAI l'exige.</span>
+            <span class="hint"> utilisé uniquement par le format « JSON guide par un schema ». Les champs du constructeur et le JSON sont synchronisés en temps réel.</span>
           </label>
           <div class="schema-table-wrap">
             <table class="schema-rows">
               <thead>
                 <tr>
-                  <th>Champ</th><th>Type</th><th>Description</th>
-                  <th>Valeurs possibles</th>
-                  <th title="longueur minimale (texte) ou borne minimale (nombre)">Min</th>
-                  <th title="longueur maximale (texte) ou borne maximale (nombre)">Max</th>
-                  <th>Motif</th>
-                  <th>Type des elements</th>
-                  <th>Obligatoire</th><th></th>
+                  <th style="width:28%">Champ</th>
+                  <th style="width:20%">Type</th>
+                  <th style="width:34%">Description</th>
+                  <th class="center" style="width:9%" title="Champ obligatoire">Requis</th>
+                  <th class="center" style="width:9%">Options</th>
+                  <th style="width:36px"></th>
                 </tr>
               </thead>
               <tbody>
                 {{range .SchemaFields}}
-                <tr>
+                <tr class="schema-row">
                   <td><input name="schema_field_name[]" value="{{.Name}}" placeholder="ex: ville"></td>
                   <td>
                     <select name="schema_field_type[]" data-role="type">
@@ -199,18 +195,33 @@
                     </select>
                   </td>
                   <td><input name="schema_field_description[]" value="{{.Description}}" placeholder="ex: nom de la ville"></td>
-                  <td><input name="schema_field_enum[]" value="{{.Enum}}" placeholder="a, b, c"></td>
-                  <td><input name="schema_field_min[]" value="{{.Min}}" placeholder="0" inputmode="numeric"></td>
-                  <td><input name="schema_field_max[]" value="{{.Max}}" placeholder="0" inputmode="numeric"></td>
-                  <td><input name="schema_field_pattern[]" value="{{.Pattern}}" placeholder="^[A-Z]"></td>
-                  <td>
-                    <select name="schema_field_items[]">
-                      <option value="" {{if eq .ItemsType ""}}selected{{end}}>-</option>
-                      {{$items := .ItemsType}}
-                      {{range $t := $.SchemaFieldTypes}}<option value="{{$t}}" {{if eq $t $items}}selected{{end}}>{{$t}}</option>{{end}}
-                    </select>
-                  </td>
                   <td class="center"><input type="checkbox" name="schema_field_required[]" value="{{.Index}}" data-role="required" {{if .Required}}checked{{end}}></td>
+                  <td class="center">
+                    <details class="schema-constraints-dropdown">
+                      <summary title="Contraintes avancées (Enum, Min, Max, Regex...)">⚙</summary>
+                      <div class="schema-constraints-panel">
+                        <label>Valeurs possibles (enum)
+                          <input name="schema_field_enum[]" value="{{.Enum}}" placeholder="a, b, c">
+                        </label>
+                        <label>Min (longueur / valeur)
+                          <input name="schema_field_min[]" value="{{.Min}}" placeholder="0" inputmode="numeric">
+                        </label>
+                        <label>Max (longueur / valeur)
+                          <input name="schema_field_max[]" value="{{.Max}}" placeholder="100" inputmode="numeric">
+                        </label>
+                        <label>Motif regex
+                          <input name="schema_field_pattern[]" value="{{.Pattern}}" placeholder="^[A-Z]">
+                        </label>
+                        <label>Type d'éléments (si array)
+                          <select name="schema_field_items[]">
+                            <option value="" {{if eq .ItemsType ""}}selected{{end}}>-</option>
+                            {{$items := .ItemsType}}
+                            {{range $t := $.SchemaFieldTypes}}<option value="{{$t}}" {{if eq $t $items}}selected{{end}}>{{$t}}</option>{{end}}
+                          </select>
+                        </label>
+                      </div>
+                    </details>
+                  </td>
                   <td class="center"><button type="button" class="btn small danger" data-role="remove-row" title="Supprimer ce champ">&times;</button></td>
                 </tr>
                 {{end}}
@@ -218,11 +229,9 @@
             </table>
           </div>
 
-          <!-- Le gabarit permet d'ajouter un champ sans recharger la page. Les
-               noms sont des tableaux "nom[]" : l'ordre du DOM donne l'ordre des
-               lignes cote serveur, ce qui dispense d'entretenir un index. -->
+          <!-- Le gabarit permet d'ajouter un champ sans recharger la page. -->
           <template id="schema-row-template">
-            <tr>
+            <tr class="schema-row">
               <td><input name="schema_field_name[]" placeholder="ex: ville"></td>
               <td>
                 <select name="schema_field_type[]" data-role="type">
@@ -230,25 +239,42 @@
                 </select>
               </td>
               <td><input name="schema_field_description[]" placeholder="ex: nom de la ville"></td>
-              <td><input name="schema_field_enum[]" placeholder="a, b, c"></td>
-              <td><input name="schema_field_min[]" placeholder="0" inputmode="numeric"></td>
-              <td><input name="schema_field_max[]" placeholder="0" inputmode="numeric"></td>
-              <td><input name="schema_field_pattern[]" placeholder="^[A-Z]"></td>
-              <td>
-                <select name="schema_field_items[]">
-                  <option value="" selected>-</option>
-                  {{range $t := $.SchemaFieldTypes}}<option value="{{$t}}">{{$t}}</option>{{end}}
-                </select>
-              </td>
               <td class="center"><input type="checkbox" name="schema_field_required[]" data-role="required"></td>
+              <td class="center">
+                <details class="schema-constraints-dropdown">
+                  <summary title="Contraintes avancées (Enum, Min, Max, Regex...)">⚙</summary>
+                  <div class="schema-constraints-panel">
+                    <label>Valeurs possibles (enum)
+                      <input name="schema_field_enum[]" placeholder="a, b, c">
+                    </label>
+                    <label>Min (longueur / valeur)
+                      <input name="schema_field_min[]" placeholder="0" inputmode="numeric">
+                    </label>
+                    <label>Max (longueur / valeur)
+                      <input name="schema_field_max[]" placeholder="100" inputmode="numeric">
+                    </label>
+                    <label>Motif regex
+                      <input name="schema_field_pattern[]" placeholder="^[A-Z]">
+                    </label>
+                    <label>Type d'éléments (si array)
+                      <select name="schema_field_items[]">
+                        <option value="" selected>-</option>
+                        {{range $t := $.SchemaFieldTypes}}<option value="{{$t}}">{{$t}}</option>{{end}}
+                      </select>
+                    </label>
+                  </div>
+                </details>
+              </td>
               <td class="center"><button type="button" class="btn small danger" data-role="remove-row" title="Supprimer ce champ">&times;</button></td>
             </tr>
           </template>
 
-          <button type="button" class="btn small" id="schema-add-field">+ Ajouter un champ</button>
+          <div style="margin:8px 0 12px">
+            <button type="button" class="btn small ghost" id="schema-add-field">+ Ajouter un champ</button>
+          </div>
           <div class="schema-preview">
-            <label>Schema JSON <span class="hint">(remplir ce champ remplace le constructeur)</span>
-              <textarea name="response_schema" rows="8" placeholder='{"type":"object","properties":{...}}'>{{.ResponseSchema}}</textarea>
+            <label>Schema JSON <span class="hint">(synchronisé avec le tableau)</span>
+              <textarea name="response_schema" rows="7" placeholder='{"type":"object","properties":{...}}'>{{.ResponseSchema}}</textarea>
             </label>
           </div>
         </div>
@@ -263,8 +289,7 @@
             </select>
             <small>Le routeur part du tier le plus bas estimé suffisant pour la conversation, puis monte d'un cran si le fournisseur sature. « aucun » exclut la configuration de l'échelle.</small>
           </label>
-          </select>
-        </label>
+        </div>
         <label>Frequency Penalty
           <input name="frequency_penalty" type="number" step="0.1" min="-2" max="2" placeholder="ex: 0"
                  value="{{if not .IsCreate}}{{f .Editing.FrequencyPenalty}}{{end}}">

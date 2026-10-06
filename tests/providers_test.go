@@ -165,3 +165,42 @@ func TestModelUseCaseMergesCatalog(t *testing.T) {
 		t.Errorf("expected catalogue source: %#v", sources)
 	}
 }
+
+func TestModelUseCaseListForProvider(t *testing.T) {
+	store := NewTestStore(t)
+	catalog := newCatalogStore(t, []domain.CatalogModel{
+		{ID: "model-1", Name: "qwen3:8b", Provider: "ollama"},
+		{ID: "model-2", Name: "mistral-small", Provider: "mistral"},
+	})
+	uc := application.NewModelUseCase([]domain.ModelInfo{
+		{Name: "gpt-4o", Provider: "openai", Source: "config.yaml"},
+	}, store, catalog)
+	ctx := context.Background()
+
+	// Empty provider returns no models
+	emptyList, err := uc.ListForProvider(ctx, "")
+	if err != nil {
+		t.Fatalf("list for empty provider: %v", err)
+	}
+	if len(emptyList) != 0 {
+		t.Fatalf("expected 0 models for empty provider, got %d", len(emptyList))
+	}
+
+	// Specific provider returns only its models
+	ollamaModels, err := uc.ListForProvider(ctx, "ollama")
+	if err != nil {
+		t.Fatalf("list for ollama: %v", err)
+	}
+	if len(ollamaModels) != 1 || ollamaModels[0].Name != "qwen3:8b" {
+		t.Fatalf("expected only qwen3:8b for ollama, got %#v", ollamaModels)
+	}
+
+	// Case-insensitivity
+	mistralModels, err := uc.ListForProvider(ctx, "MISTRAL")
+	if err != nil {
+		t.Fatalf("list for MISTRAL: %v", err)
+	}
+	if len(mistralModels) != 1 || mistralModels[0].Name != "mistral-small" {
+		t.Fatalf("expected only mistral-small for MISTRAL, got %#v", mistralModels)
+	}
+}

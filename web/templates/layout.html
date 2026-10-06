@@ -54,14 +54,20 @@ tr.active{background:rgba(34,197,94,.06)}
 .badge{display:inline-block;padding:2px 10px;border-radius:999px;background:var(--panel2);color:var(--muted);font-size:.74rem;font-weight:600}
 .badge.ok{background:rgba(34,197,94,.15);color:var(--ok)}
 .table-wrap{overflow-x:auto}
-/* Le constructeur compte dix colonnes : sans defilement horizontal, il deborde
-   du dialogue sur les ecrans etroits et les dernieres colonnes deviennent
-   inaccessibles. */
-.schema-table-wrap{overflow-x:auto;max-width:100%}
-.schema-rows th,.schema-rows td{white-space:nowrap}
-.schema-rows input[type=text],.schema-rows input:not([type]),.schema-rows select{min-width:90px}
-.schema-rows td:nth-child(3) input{min-width:150px}
-.schema-rows td:nth-child(7) input{min-width:110px}
+.schema-table-wrap{overflow-x:visible;max-width:100%;margin-bottom:6px}
+.schema-rows th,.schema-rows td{padding:6px 8px;vertical-align:middle}
+.schema-rows input,.schema-rows select{margin-top:0;padding:6px 8px;font-size:.85rem}
+.schema-constraints-dropdown{position:relative;display:inline-block}
+.schema-constraints-dropdown summary{cursor:pointer;font-size:.85rem;color:var(--muted);padding:4px 8px;border-radius:6px;background:var(--panel2);border:1px solid var(--line);list-style:none;display:inline-flex;align-items:center;justify-content:center;user-select:none;transition:all .15s}
+.schema-constraints-dropdown summary::-webkit-details-marker{display:none}
+.schema-constraints-dropdown summary:hover{color:var(--text);border-color:var(--accent)}
+.schema-constraints-dropdown[open] summary{color:var(--accent);border-color:var(--accent);background:var(--panel)}
+.schema-constraints-panel{position:absolute;z-index:50;top:calc(100% + 6px);right:0;width:300px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;box-shadow:0 10px 28px rgba(0,0,0,.6);display:grid;grid-template-columns:1fr 1fr;gap:8px;text-align:left}
+.schema-constraints-panel label{font-size:.74rem;color:var(--muted);margin:0;display:flex;flex-direction:column}
+.schema-constraints-panel input, .schema-constraints-panel select{padding:6px 8px;font-size:.8rem;margin-top:4px}
+.schema-constraints-panel label:nth-child(1){grid-column:1 / -1}
+.schema-constraints-panel label:nth-child(4){grid-column:1 / -1}
+.schema-constraints-panel label:nth-child(5){grid-column:1 / -1}
 .toast{padding:12px 14px;border-radius:10px;margin-bottom:14px;font-size:.9rem}
 .toast.error{background:rgba(239,68,68,.12);border:1px solid var(--danger);color:var(--danger)}
 
@@ -139,18 +145,16 @@ tr.active{background:rgba(34,197,94,.06)}
 {{define "tail"}}
 </main>
 <script>
-// Constructeur de schema : ajout et suppression de champs.
-//
-// Tout passe par la delegation sur document, jamais par un ecouteur pose sur la
-// table : le bloc #project-configs-section est remplace integralement a chaque
-// activation, et un ecouteur attache a l'ancien DOM serait perdu.
+// Constructeur de schema : ajout/suppression de champs et synchronisation bi-directionnelle avec le JSON.
 (function () {
+  var isSyncing = false;
+
   function rowsOf(table) {
-    return Array.prototype.slice.call(table.tBodies[0].rows);
+    if (!table) return [];
+    var tbody = table.querySelector('tbody') || (table.tBodies && table.tBodies[0]);
+    return tbody ? Array.prototype.slice.call(tbody.rows) : [];
   }
 
-  // Le serveur apparie la case "obligatoire" a une ligne par sa position dans le
-  // tableau ; renumeroter apres chaque ajout ou suppression est donc obligatoire.
   function renumber(table) {
     rowsOf(table).forEach(function (row, index) {
       var box = row.querySelector('[data-role="required"]');
@@ -158,34 +162,234 @@ tr.active{background:rgba(34,197,94,.06)}
     });
   }
 
+  function updateJSONFromRows(builderEl) {
+    if (isSyncing || !builderEl) return;
+    isSyncing = true;
+    try {
+      var textarea = builderEl.querySelector('textarea[name="response_schema"]');
+      if (!textarea) return;
+
+      var table = builderEl.querySelector('.schema-rows');
+      var rows = rowsOf(table);
+      var properties = {};
+      var required = [];
+
+      rows.forEach(function (row) {
+        var nameInput = row.querySelector('input[name="schema_field_name[]"]');
+        var typeSelect = row.querySelector('select[name="schema_field_type[]"]');
+        var descInput = row.querySelector('input[name="schema_field_description[]"]');
+        var enumInput = row.querySelector('input[name="schema_field_enum[]"]');
+        var minInput = row.querySelector('input[name="schema_field_min[]"]');
+        var maxInput = row.querySelector('input[name="schema_field_max[]"]');
+        var patternInput = row.querySelector('input[name="schema_field_pattern[]"]');
+        var itemsSelect = row.querySelector('select[name="schema_field_items[]"]');
+        var reqBox = row.querySelector('[data-role="required"]');
+
+        var name = nameInput ? nameInput.value.trim() : '';
+        if (!name) return;
+
+        var type = typeSelect ? typeSelect.value : 'string';
+        var prop = { type: type };
+
+        var desc = descInput ? descInput.value.trim() : '';
+        if (desc) prop.description = desc;
+
+        var enumVal = enumInput ? enumInput.value.trim() : '';
+        if (enumVal) {
+          prop.enum = enumVal.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+        }
+
+        var minVal = minInput ? minInput.value.trim() : '';
+        var maxVal = maxInput ? maxInput.value.trim() : '';
+        var patternVal = patternInput ? patternInput.value.trim() : '';
+        var itemsVal = itemsSelect ? itemsSelect.value.trim() : '';
+
+        if (type === 'string') {
+          if (minVal !== '' && !isNaN(parseInt(minVal, 10))) prop.minLength = parseInt(minVal, 10);
+          if (maxVal !== '' && !isNaN(parseInt(maxVal, 10))) prop.maxLength = parseInt(maxVal, 10);
+          if (patternVal) prop.pattern = patternVal;
+        } else if (type === 'number' || type === 'integer') {
+          if (minVal !== '' && !isNaN(parseFloat(minVal))) prop.minimum = parseFloat(minVal);
+          if (maxVal !== '' && !isNaN(parseFloat(maxVal))) prop.maximum = parseFloat(maxVal);
+        } else if (type === 'array') {
+          prop.items = { type: itemsVal || 'string' };
+        }
+
+        properties[name] = prop;
+        if (reqBox && reqBox.checked) {
+          required.push(name);
+        }
+      });
+
+      if (Object.keys(properties).length === 0) {
+        textarea.value = '';
+      } else {
+        var schema = {
+          type: 'object',
+          properties: properties,
+          additionalProperties: false
+        };
+        if (required.length > 0) {
+          required.sort();
+          schema.required = required;
+        }
+        textarea.value = JSON.stringify(schema, null, 2);
+      }
+    } finally {
+      isSyncing = false;
+    }
+  }
+
+  function updateRowsFromJSON(builderEl) {
+    if (isSyncing || !builderEl) return;
+    var textarea = builderEl.querySelector('textarea[name="response_schema"]');
+    if (!textarea) return;
+
+    var val = textarea.value.trim();
+    if (!val) return;
+
+    var parsed;
+    try {
+      parsed = JSON.parse(val);
+    } catch (e) {
+      return;
+    }
+
+    if (!parsed || typeof parsed !== 'object' || parsed.type !== 'object' || !parsed.properties) {
+      return;
+    }
+
+    var table = builderEl.querySelector('.schema-rows');
+    var tbody = table ? (table.querySelector('tbody') || table.tBodies[0]) : null;
+    var template = document.getElementById('schema-row-template');
+    if (!tbody || !template) return;
+
+    var requiredSet = {};
+    if (Array.isArray(parsed.required)) {
+      parsed.required.forEach(function (k) { requiredSet[k] = true; });
+    }
+
+    var propNames = Object.keys(parsed.properties);
+    if (propNames.length === 0) return;
+
+    isSyncing = true;
+    try {
+      tbody.innerHTML = '';
+      propNames.forEach(function (name, idx) {
+        var prop = parsed.properties[name] || {};
+        var clone = template.content.cloneNode(true);
+
+        var nameInput = clone.querySelector('input[name="schema_field_name[]"]');
+        if (nameInput) nameInput.value = name;
+
+        var typeSelect = clone.querySelector('select[name="schema_field_type[]"]');
+        if (typeSelect && prop.type) typeSelect.value = prop.type;
+
+        var descInput = clone.querySelector('input[name="schema_field_description[]"]');
+        if (descInput && prop.description) descInput.value = prop.description;
+
+        var reqBox = clone.querySelector('[data-role="required"]');
+        if (reqBox) {
+          reqBox.checked = !!requiredSet[name];
+          reqBox.value = String(idx);
+        }
+
+        var enumInput = clone.querySelector('input[name="schema_field_enum[]"]');
+        if (enumInput && Array.isArray(prop.enum)) enumInput.value = prop.enum.join(', ');
+
+        var minInput = clone.querySelector('input[name="schema_field_min[]"]');
+        if (minInput) {
+          if (prop.minLength !== undefined) minInput.value = prop.minLength;
+          else if (prop.minimum !== undefined) minInput.value = prop.minimum;
+        }
+
+        var maxInput = clone.querySelector('input[name="schema_field_max[]"]');
+        if (maxInput) {
+          if (prop.maxLength !== undefined) maxInput.value = prop.maxLength;
+          else if (prop.maximum !== undefined) maxInput.value = prop.maximum;
+        }
+
+        var patternInput = clone.querySelector('input[name="schema_field_pattern[]"]');
+        if (patternInput && prop.pattern) patternInput.value = prop.pattern;
+
+        var itemsSelect = clone.querySelector('select[name="schema_field_items[]"]');
+        if (itemsSelect && prop.items && prop.items.type) itemsSelect.value = prop.items.type;
+
+        tbody.appendChild(clone);
+      });
+      renumber(table);
+    } finally {
+      isSyncing = false;
+    }
+  }
+
   function addRow(table) {
     var template = document.getElementById('schema-row-template');
     if (!template) { return; }
-    table.tBodies[0].appendChild(template.content.cloneNode(true));
+    var tbody = table.querySelector('tbody') || (table.tBodies && table.tBodies[0]);
+    if (!tbody) { return; }
+    tbody.appendChild(template.content.cloneNode(true));
     renumber(table);
     var rows = rowsOf(table);
     var last = rows[rows.length - 1];
     var name = last && last.querySelector('input[name="schema_field_name[]"]');
     if (name) { name.focus(); }
+    var builder = table.closest('.schema-builder');
+    if (builder) updateJSONFromRows(builder);
   }
 
   function removeRow(row) {
     var table = row.closest('table');
     if (!table) { return; }
-    // Le schema exige au moins un champ : on ne descend jamais sous une ligne.
-    if (rowsOf(table).length <= 1) {
-      rowsOf(table)[0].querySelectorAll('input, select').forEach(function (el) {
+    var rows = rowsOf(table);
+    if (rows.length <= 1) {
+      rows[0].querySelectorAll('input, select').forEach(function (el) {
         if (el.type === 'checkbox') { el.checked = false; } else { el.value = ''; }
       });
+      renumber(table);
+      var builder = table.closest('.schema-builder');
+      if (builder) updateJSONFromRows(builder);
       return;
     }
     row.remove();
     renumber(table);
+    var builder = table.closest('.schema-builder');
+    if (builder) updateJSONFromRows(builder);
   }
+
+  document.addEventListener('input', function (event) {
+    var target = event.target;
+    if (!target) return;
+    if (target.name === 'response_schema') {
+      var builder = target.closest('.schema-builder');
+      if (builder) updateRowsFromJSON(builder);
+      return;
+    }
+    var builder = target.closest('.schema-builder');
+    if (builder && target.name && target.name.startsWith('schema_field_')) {
+      updateJSONFromRows(builder);
+    }
+  });
+
+  document.addEventListener('change', function (event) {
+    var target = event.target;
+    if (!target) return;
+    var builder = target.closest('.schema-builder');
+    if (builder && target.name && target.name.startsWith('schema_field_')) {
+      updateJSONFromRows(builder);
+    }
+  });
 
   document.addEventListener('click', function (event) {
     var target = event.target;
     if (!target) { return; }
+
+    var openDropdowns = document.querySelectorAll('.schema-constraints-dropdown[open]');
+    openDropdowns.forEach(function (dd) {
+      if (!dd.contains(target)) {
+        dd.removeAttribute('open');
+      }
+    });
 
     if (target.id === 'schema-add-field') {
       event.preventDefault();

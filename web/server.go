@@ -133,19 +133,34 @@ func (s *Server) providerNames(ctx context.Context) []string {
 }
 
 func (s *Server) baseForm(ctx context.Context, pid string, editing *domain.ChatConfig) configFormData {
+	providers := s.providerList(ctx)
 	data := configFormData{
 		ProjectID:   pid,
 		Action:      "/projects/" + pid + "/configs",
 		Editing:     editing,
 		IsCreate:    editing == nil,
 		UseDefaults: editing == nil,
-		Providers:   s.providerNames(ctx),
+		Providers:   providers,
 	}
 	if editing != nil {
 		data.Action += "/" + editing.ID
 		data.SelectedProvider = editing.Provider
+		data.SelectedModel = editing.Model
 	}
-	data.ModelHints = s.modelHints(ctx, data.SelectedProvider)
+	hints := s.modelHints(ctx, data.SelectedProvider)
+	if editing != nil && editing.Model != "" {
+		found := false
+		for _, h := range hints {
+			if h == editing.Model {
+				found = true
+				break
+			}
+		}
+		if !found {
+			hints = append([]string{editing.Model}, hints...)
+		}
+	}
+	data.Models = hints
 	data.SchemaFieldTypes = domain.SchemaFieldTypes()
 	data.SchemaFields = schemaRowsFromStored(editingSchema(editing))
 	data.ResponseSchema = ""
@@ -569,21 +584,23 @@ func (s *Server) projectConfigModels(w http.ResponseWriter, r *http.Request) {
 	}
 
 	provider := strings.TrimSpace(r.FormValue("provider"))
-	models, err := s.models.ListForProvider(r.Context(), provider)
-	if err != nil {
-		s.renderToast(w, "#project-config-error", err.Error())
-		return
-	}
-
-	hints := make([]string, 0, len(models))
-	for _, m := range models {
-		hints = append(hints, m.Name)
+	var hints []string
+	if provider != "" {
+		models, err := s.models.ListForProvider(r.Context(), provider)
+		if err != nil {
+			s.renderToast(w, "#project-config-error", err.Error())
+			return
+		}
+		for _, m := range models {
+			hints = append(hints, m.Name)
+		}
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	// La definition du template fait `range .`, donc le dot doit etre la slice
-	// elle-meme. Passer une map produirait une seule option contenant le slice.
-	s.render(w, "config_model_hints", hints)
+	s.render(w, "config_model_select", map[string]any{
+		"Models":        hints,
+		"SelectedModel": "",
+	})
 }
 
 func (s *Server) renderProjectKeysSection(w http.ResponseWriter, r *http.Request, pid string, newKey string) {
@@ -767,9 +784,10 @@ type configFormData struct {
 	ProjectID        string
 	IsCreate         bool
 	UseDefaults      bool
-	Providers        []string
+	Providers        []domain.Provider
 	SelectedProvider string
-	ModelHints       []string
+	SelectedModel    string
+	Models           []string
 	// SchemaFields restitue les champs du schema enregistre pour que l'edition
 	// parte de l'etat reel plutot que d'un formulaire vide.
 	SchemaFields     []schemaRow
