@@ -91,6 +91,8 @@ function resetChat() {
   textarea.value = '';
   textarea.style.height = '24px';
   textarea.focus();
+  // On oublie aussi l'historique local : nouvelle discussion = nouveau stockage.
+  try { localStorage.removeItem('chat_history_messages'); } catch (e) {}
 }
 
 function copyCurlSnippet(button) {
@@ -148,6 +150,12 @@ document.addEventListener('htmx:beforeRequest', function(evt) {
     });
     document.getElementById('chat-history').value = JSON.stringify(items);
 
+    // On garde l'historique en localstorage pour que la discussion survive au
+    // rechargement de la page (reload, retour arriere, nouvelle alerte, etc.).
+    try {
+      localStorage.setItem('chat_history_messages', JSON.stringify(items));
+    } catch (e) {}
+
     var textarea = document.getElementById('chat-message');
     var userText = textarea.value.trim();
     if (userText) {
@@ -186,6 +194,57 @@ document.addEventListener('htmx:afterSwap', function(evt) {
     if (textarea) textarea.focus();
   }
 });
+
+// A l'initialisation, on restaure l'historique local si existant. On ne tente
+// pas de rejouer les messages serveur : le serveur voit toujours l'historique
+// envoye dans le champ cache hidden a chaque nouveau message.
+(function () {
+  try {
+    var saved = localStorage.getItem('chat_history_messages');
+    if (!saved) return;
+    var items = JSON.parse(saved);
+    if (!Array.isArray(items)) return;
+    var container = document.getElementById('chat-messages');
+    if (!container) return;
+
+    // Si on avait deja une discussion en cours dans le DOM (ex: rechargement
+    // apres un swap htmx), on la garde et on n'ajoute pas en double.
+    var existing = [];
+    container.querySelectorAll('.chat-message').forEach(function(node) {
+      if (node.dataset.role && node.dataset.content) {
+        existing.push({role: node.dataset.role, content: node.dataset.content});
+      }
+    });
+
+    var seen = {};
+    existing.forEach(function(m) { seen[m.role + '|' + m.content] = true; });
+
+    var appended = false;
+    items.forEach(function(m) {
+      var key = m.role + '|' + m.content;
+      if (seen[key]) return;
+      if (!m.role || !m.content) return;
+
+      var msgDiv = document.createElement('div');
+      msgDiv.className = 'chat-message ' + m.role;
+      msgDiv.dataset.role = m.role;
+      msgDiv.dataset.content = m.content;
+      msgDiv.innerHTML = `
+        <div class="chat-avatar">${m.role === 'user' ? 'U' : 'AI'}</div>
+        <div class="chat-content-wrap">
+          <div class="chat-sender">${m.role === 'user' ? 'Vous' : 'Assistant'}</div>
+          <div class="bubble"></div>
+        </div>
+      `;
+      msgDiv.querySelector('.bubble').textContent = m.content;
+      container.appendChild(msgDiv);
+      appended = true;
+    });
+
+    if (appended) scrollToBottom();
+  } catch (e) {}
+})();
+
 </script>
 {{template "tail" .}}
 {{end}}

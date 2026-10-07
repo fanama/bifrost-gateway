@@ -258,6 +258,8 @@ func (s *Server) chatSend(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	// L'historique complet de la conversation est classe, pas seulement le
+	// dernier message.
 	s.render(w, "chat_messages", map[string]any{
 		"Messages":       result.Messages,
 		"ServedModel":    result.Model,
