@@ -4,14 +4,8 @@
 {{template "nav" .}}
 <main id="main" class="page-chat-container">
   <div class="chat-topbar">
-    <div class="chat-topbar-left">
-      <label for="chat-config-select">Configuration :</label>
-      <select id="chat-config-select" name="config_id" form="chat-form" required>
-        <option value="" disabled {{if not .Configs}}selected{{end}}>Choisir une configuration</option>
-        {{range .Configs}}
-        <option value="{{.ID}}" {{if .Active}}selected{{end}}>{{.Name}} — {{.Model}} ({{.Provider}}){{if .Active}} ✓{{end}}</option>
-        {{end}}
-      </select>
+    <div class="chat-topbar-left" id="chat-config-selector">
+      {{template "chat_config_select" .}}
     </div>
     <div class="actions">
       <button class="btn ghost small" type="button" onclick="resetChat()">Nouvelle discussion</button>
@@ -19,6 +13,7 @@
   </div>
 
   <div id="chat-error"></div>
+  <dialog id="config-form-zone" class="card"></dialog>
 
   <div class="chat-box">
     <div id="chat-scroll-area" class="chat-messages-container">
@@ -187,11 +182,39 @@ document.addEventListener('htmx:beforeRequest', function(evt) {
   }
 });
 
+function openChatConfigEdit() {
+  var select = document.getElementById('chat-config-select');
+  if (!select || !select.value) {
+    return;
+  }
+  htmx.ajax('GET', '/chat/configs/' + encodeURIComponent(select.value) + '/edit', {
+    target: '#config-form-zone',
+    swap: 'outerHTML'
+  });
+}
+
+function updateEditButtonState() {
+  var select = document.getElementById('chat-config-select');
+  var btn = document.getElementById('chat-edit-config-btn');
+  if (btn && select) {
+    btn.disabled = !select.value;
+  }
+}
+
 document.addEventListener('htmx:afterSwap', function(evt) {
   if (evt.detail.target && evt.detail.target.id === 'chat-messages') {
     scrollToBottom();
     var textarea = document.getElementById('chat-message');
     if (textarea) textarea.focus();
+  }
+  if (evt.detail.target && evt.detail.target.id === 'config-form-zone') {
+    var dialog = document.getElementById('config-form-zone');
+    if (dialog && typeof dialog.showModal === 'function' && !dialog.open) {
+      dialog.showModal();
+    }
+  }
+  if (evt.detail.target && evt.detail.target.id === 'chat-config-selector') {
+    updateEditButtonState();
   }
 });
 
@@ -297,4 +320,15 @@ document.addEventListener('htmx:afterSwap', function(evt) {
 {{if .ServedModel}}
 <div class="chat-served-model">Réponse produite par <strong>{{.ServedModel}}</strong>{{if ne .ServedModel .RequestedModel}} <span class="hint">(routage automatique ; configuration sélectionnée : {{.RequestedModel}})</span>{{end}}</div>
 {{end}}
+{{end}}
+
+{{define "chat_config_select"}}
+<label for="chat-config-select">Configuration :</label>
+<select id="chat-config-select" name="config_id" form="chat-form" required onchange="updateEditButtonState()">
+  <option value="" disabled {{if not .SelectedConfigID}}{{if not .HasActive}}selected{{end}}{{end}}>Choisir une configuration</option>
+  {{range .Configs}}
+  <option value="{{.ID}}" {{if eq .ID $.SelectedConfigID}}selected{{else if and (not $.SelectedConfigID) .Active}}selected{{end}}>{{.Name}} — {{.Model}} ({{.Provider}}){{if .Active}} ✓{{end}}</option>
+  {{end}}
+</select>
+<button class="btn ghost small" type="button" id="chat-edit-config-btn" onclick="openChatConfigEdit()" {{if not .Configs}}disabled{{end}}>Modifier</button>
 {{end}}

@@ -67,6 +67,8 @@ func NewServer(
 func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /{$}", s.pageChat)
 	mux.HandleFunc("POST /chat/send", s.chatSend)
+	mux.HandleFunc("GET /chat/configs/{cid}/edit", s.editChatConfigForm)
+	mux.HandleFunc("POST /chat/configs/{cid}", s.updateChatConfig)
 
 	mux.HandleFunc("GET /models", s.pageModels)
 	mux.HandleFunc("POST /models", s.createModel)
@@ -193,8 +195,10 @@ func (s *Server) pageChat(w http.ResponseWriter, r *http.Request) {
 	// L'exemple curl propose par defaut le modele de la configuration active,
 	// sinon celui de la premiere configuration disponible.
 	defaultModel := ""
+	hasActive := false
 	for i := range configs {
 		if configs[i].Active {
+			hasActive = true
 			defaultModel = configs[i].Model
 			break
 		}
@@ -207,8 +211,57 @@ func (s *Server) pageChat(w http.ResponseWriter, r *http.Request) {
 		"Active":       "chat",
 		"Title":        "Discussion",
 		"Configs":      configs,
+		"HasActive":    hasActive,
 		"BaseURL":      chatAPIBaseURL(r),
 		"DefaultModel": defaultModel,
+	})
+}
+
+func (s *Server) editChatConfigForm(w http.ResponseWriter, r *http.Request) {
+	cid := r.PathValue("cid")
+	cfg, err := s.configs.Get(r.Context(), cid)
+	if err != nil {
+		s.renderToast(w, "#chat-error", err.Error())
+		return
+	}
+	form := s.baseForm(r.Context(), cfg.ProjectID, cfg)
+	form.Action = "/chat/configs/" + cid
+	form.Target = "#chat-config-selector"
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	s.render(w, "config_form", form)
+}
+
+func (s *Server) updateChatConfig(w http.ResponseWriter, r *http.Request) {
+	cid := r.PathValue("cid")
+	existing, err := s.configs.Get(r.Context(), cid)
+	if err != nil {
+		s.renderToast(w, "#chat-error", err.Error())
+		return
+	}
+	patch := parseConfigForm(r)
+	patch.ResponseSchema = parseSchemaRows(r)
+	patch.ProjectID = existing.ProjectID
+	if _, err := s.configs.Update(r.Context(), cid, patch); err != nil {
+		s.renderToast(w, "#chat-error", err.Error())
+		return
+	}
+	configs, err := s.configs.List(r.Context())
+	if err != nil {
+		s.renderToast(w, "#chat-error", err.Error())
+		return
+	}
+	hasActive := false
+	for _, c := range configs {
+		if c.Active {
+			hasActive = true
+			break
+		}
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	s.render(w, "chat_config_select", map[string]any{
+		"Configs":          configs,
+		"SelectedConfigID": cid,
+		"HasActive":        hasActive,
 	})
 }
 

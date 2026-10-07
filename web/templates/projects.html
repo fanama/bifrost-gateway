@@ -75,23 +75,6 @@
   </section>
 </main>
 {{template "tail" .}}
-<script>
-(function(){
-  document.addEventListener('change', function(e){
-    if(e.target && e.target.id === 'cfg-provider'){
-      var opt = e.target.selectedOptions ? e.target.selectedOptions[0] : e.target.options[e.target.selectedIndex];
-      var baseURL = opt ? (opt.dataset.baseUrl || '') : '';
-      var apiKey = opt ? (opt.dataset.apiKey || '') : '';
-      var url = document.getElementById('cfg-base-url');
-      if(url) url.value = baseURL;
-      var key = document.getElementById('cfg-api-key');
-      if(key) key.value = apiKey;
-    }
-  });
-})();
-</script>
-</body>
-</html>
 {{end}}
 
 {{define "project_configs_section"}}
@@ -115,7 +98,7 @@
   <!-- Le garde `event.target===this` est indispensable : htmx:afterRequest remonte
        (bubble) depuis les hx-get enfants (refresh des modeles au changement de
        provider) et fermerait la modale a chaque changement de provider. -->
-  <form hx-post="{{.Action}}" hx-target="#project-configs-section" hx-swap="innerHTML"
+  <form hx-post="{{.Action}}" hx-target="{{if .Target}}{{.Target}}{{else}}#project-configs-section{{end}}" hx-swap="innerHTML"
         hx-on::after-request="if(event.detail.successful && event.target===this){this.closest('dialog').close()}">
     <div class="grid2">
       <label>Nom

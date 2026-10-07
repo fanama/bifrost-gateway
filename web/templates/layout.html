@@ -147,6 +147,9 @@ tr.active{background:rgba(34,197,94,.06)}
 <script>
 // Constructeur de schema : ajout/suppression de champs et synchronisation bi-directionnelle avec le JSON.
 (function () {
+  if (window.__schemaBuilderInitialized) return;
+  window.__schemaBuilderInitialized = true;
+
   var isSyncing = false;
 
   function rowsOf(table) {
@@ -391,9 +394,11 @@ tr.active{background:rgba(34,197,94,.06)}
       }
     });
 
-    if (target.id === 'schema-add-field') {
+    var addBtn = target.closest('#schema-add-field');
+    if (addBtn) {
       event.preventDefault();
-      var table = target.closest('.schema-builder').querySelector('table.schema-rows');
+      var builder = addBtn.closest('.schema-builder');
+      var table = builder ? builder.querySelector('table.schema-rows') : null;
       if (table) { addRow(table); }
       return;
     }
@@ -402,6 +407,19 @@ tr.active{background:rgba(34,197,94,.06)}
     if (remove) {
       event.preventDefault();
       removeRow(remove.closest('tr'));
+      return;
+    }
+  });
+
+  document.addEventListener('change', function(e){
+    if(e.target && e.target.id === 'cfg-provider'){
+      var opt = e.target.selectedOptions ? e.target.selectedOptions[0] : e.target.options[e.target.selectedIndex];
+      var baseURL = opt ? (opt.dataset.baseUrl || '') : '';
+      var apiKey = opt ? (opt.dataset.apiKey || '') : '';
+      var url = document.getElementById('cfg-base-url');
+      if(url) url.value = baseURL;
+      var key = document.getElementById('cfg-api-key');
+      if(key) key.value = apiKey;
     }
   });
 })();
