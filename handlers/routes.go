@@ -11,9 +11,14 @@ import "net/http"
 //
 // Les routes sont declarees sans methode, le controle revenant aux handlers :
 // c'est ce qui permet de repondre 405 plutot que le 404 du repli "/v1/".
-func RegisterRoutes(mux *http.ServeMux, chat *ChatHandler, models *ModelsHandler) {
+func RegisterRoutes(mux *http.ServeMux, chat *ChatHandler, models *ModelsHandler, embeddings *EmbeddingHandler) {
 	// Generation de texte.
 	mux.HandleFunc("/v1/chat/completions", chat.HandleChatCompletion)
+
+	// Embeddings
+	if embeddings != nil {
+		mux.HandleFunc("/v1/embeddings", embeddings.HandleEmbedding)
+	}
 
 	// Decouverte de modeles : les SDK et les agents interrogent /v1/models
 	// avant de choisir un modele.

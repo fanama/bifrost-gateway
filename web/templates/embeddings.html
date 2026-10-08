@@ -1,0 +1,238 @@
+{{define "page_embeddings"}}
+{{template "head" .}}
+<body hx-boost="true">
+{{template "nav" .}}
+<main id="main">
+  <div class="page-head">
+    <div>
+      <h1>Testeur d'Embeddings</h1>
+      <p class="muted">Générez des vecteurs d'embedding et évaluez la similarité sémantique via l'API OpenAI /v1/embeddings.</p>
+    </div>
+  </div>
+
+  <div id="embed-error"></div>
+
+  <div class="card">
+    <form hx-post="/embeddings-test/compute" hx-target="#embed-result" hx-indicator="#embed-loading" id="embed-form">
+      <div class="grid2" style="margin-bottom:14px">
+        <div>
+          <label>Configuration / Modèle
+            <select name="config_id" id="embed-config-select" onchange="updateCurlSnippet()">
+              {{range .Configs}}
+              <option value="{{.ID}}" data-model="{{.Model}}" {{if .Active}}selected{{end}}>
+                {{.Name}} ({{.Provider}} / {{.Model}}){{if .Active}} — Active{{end}}
+              </option>
+              {{end}}
+            </select>
+          </label>
+        </div>
+        <div>
+          <label>Dimensions souhaitées (optionnel)
+            <input type="number" name="dimensions" placeholder="Ex: 512, 768, 1536 (par défaut)" min="1" max="8192">
+          </label>
+        </div>
+      </div>
+
+      <div style="margin-bottom:14px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <label style="margin:0;font-weight:600">Mode de test</label>
+          <div style="display:flex;gap:12px;font-size:0.85rem">
+            <label style="margin:0;cursor:pointer;display:inline-flex;align-items:center;gap:4px">
+              <input type="radio" name="mode" value="single" checked onchange="toggleEmbedMode(this.value)" style="width:auto;margin:0"> Texte unique
+            </label>
+            <label style="margin:0;cursor:pointer;display:inline-flex;align-items:center;gap:4px">
+              <input type="radio" name="mode" value="compare" onchange="toggleEmbedMode(this.value)" style="width:auto;margin:0"> Comparaison sémantique (2 textes)
+            </label>
+          </div>
+        </div>
+
+        <div id="single-text-zone">
+          <label>Texte à encoder
+            <textarea name="input_text" id="input_text" rows="3" placeholder="Entrez un texte ou une phrase à vectoriser…" required oninput="updateCurlSnippet()">Le chat dort paisiblement sur le canapé.</textarea>
+          </label>
+        </div>
+
+        <div id="compare-text-zone" style="display:none" class="grid2">
+          <div>
+            <label>Texte A
+              <textarea name="input_text_a" id="input_text_a" rows="3" placeholder="Premier texte…" oninput="updateCurlSnippet()">Le chat dort paisiblement sur le canapé.</textarea>
+            </label>
+          </div>
+          <div>
+            <label>Texte B
+              <textarea name="input_text_b" id="input_text_b" rows="3" placeholder="Deuxième texte pour mesurer la similarité cosinus…" oninput="updateCurlSnippet()">Un félin fait la sieste sur le sofa.</textarea>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div style="display:flex;align-items:center;justify-content:space-between">
+        <button class="btn" type="submit" id="embed-submit-btn">
+          <span>Générer l'embedding</span>
+        </button>
+        <span id="embed-loading" class="htmx-indicator muted" style="font-size:0.85rem">Calcul vectoriel en cours…</span>
+      </div>
+    </form>
+  </div>
+
+  <div id="embed-result">
+    {{template "embed_placeholder" .}}
+  </div>
+
+  <div class="curl-example card" style="margin-top:20px">
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 14px;border-bottom:1px solid var(--line)">
+      <span style="font-weight:600;font-size:0.85rem">Exemple d'appel cURL équivalent (/v1/embeddings)</span>
+      <button class="btn ghost small" type="button" onclick="copyCurlSnippet(this)">Copier la commande</button>
+    </div>
+    <div style="padding:14px">
+      <pre class="curl-example-code" style="margin:0"><code id="curl-snippet">{{.CurlSnippet}}</code></pre>
+    </div>
+  </div>
+
+<script>
+function toggleEmbedMode(mode) {
+  var single = document.getElementById('single-text-zone');
+  var compare = document.getElementById('compare-text-zone');
+  var textInput = document.getElementById('input_text');
+  var textA = document.getElementById('input_text_a');
+  var textB = document.getElementById('input_text_b');
+
+  if (mode === 'compare') {
+    single.style.display = 'none';
+    compare.style.display = 'grid';
+    textInput.removeAttribute('required');
+    textA.setAttribute('required', 'required');
+    textB.setAttribute('required', 'required');
+  } else {
+    single.style.display = 'block';
+    compare.style.display = 'none';
+    textInput.setAttribute('required', 'required');
+    textA.removeAttribute('required');
+    textB.removeAttribute('required');
+  }
+  updateCurlSnippet();
+}
+
+function updateCurlSnippet() {
+  var select = document.getElementById('embed-config-select');
+  var opt = select ? (select.selectedOptions ? select.selectedOptions[0] : select.options[select.selectedIndex]) : null;
+  var model = opt ? (opt.dataset.model || 'text-embedding-3-small') : 'text-embedding-3-small';
+  var isCompare = document.querySelector('input[name="mode"][value="compare"]').checked;
+  var payload;
+
+  if (isCompare) {
+    var txtA = (document.getElementById('input_text_a').value || '').replace(/"/g, '\\"');
+    var txtB = (document.getElementById('input_text_b').value || '').replace(/"/g, '\\"');
+    payload = '{"model":"' + model + '","input":["' + txtA + '","' + txtB + '"]}';
+  } else {
+    var txt = (document.getElementById('input_text').value || '').replace(/"/g, '\\"');
+    payload = '{"model":"' + model + '","input":"' + txt + '"}';
+  }
+
+  var baseURL = '{{.BaseURL}}';
+  if (!baseURL) baseURL = window.location.origin;
+  var snippet = 'curl ' + baseURL + '/v1/embeddings \\\n' +
+    '  -H "Authorization: Bearer <VOTRE_CLE_API>" \\\n' +
+    '  -H "Content-Type: application/json" \\\n' +
+    '  -d \'' + payload + '\'';
+
+  var el = document.getElementById('curl-snippet');
+  if (el) el.textContent = snippet;
+}
+
+function copyToClipboard(text, btn) {
+  navigator.clipboard.writeText(text).then(function() {
+    var orig = btn.textContent;
+    btn.textContent = 'Copié !';
+    setTimeout(function() { btn.textContent = orig; }, 1500);
+  });
+}
+
+function copyCurlSnippet(button) {
+  var snippet = document.getElementById('curl-snippet');
+  if (!snippet) return;
+  copyToClipboard(snippet.textContent, button);
+}
+
+document.addEventListener('DOMContentLoaded', updateCurlSnippet);
+</script>
+</main>
+</body>
+</html>
+{{end}}
+
+{{define "embed_placeholder"}}
+<div class="card center muted" style="padding:40px 20px">
+  <div style="font-size:2rem;margin-bottom:8px">🧬</div>
+  <div style="font-size:1.1rem;font-weight:600;color:var(--text);margin-bottom:4px">Aucun embedding généré</div>
+  <div style="font-size:0.85rem">Saisissez un texte ou comparez deux phrases ci-dessus pour visualiser leurs vecteurs et similarité.</div>
+</div>
+{{end}}
+
+{{define "embed_result"}}
+<div class="card">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px">
+    <div style="display:flex;align-items:center;gap:8px">
+      <h3 style="margin:0;font-size:1.15rem">Résultats de vectorisation</h3>
+      <span class="badge ok">{{.Model}}</span>
+    </div>
+    <div style="display:flex;gap:12px;font-size:0.82rem;color:var(--muted)">
+      <span>Dimensions : <strong style="color:var(--text)">{{.Dimensions}}</strong></span>
+      <span>Tokens : <strong style="color:var(--text)">{{.Usage.PromptTokens}}</strong></span>
+      <span>Éléments : <strong style="color:var(--text)">{{len .Items}}</strong></span>
+      <span>Latence : <strong style="color:var(--text)">{{.LatencyMS}} ms</strong></span>
+    </div>
+  </div>
+
+  {{if .HasSimilarity}}
+  <div style="background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:16px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <span style="font-weight:600;font-size:0.92rem">Score de similarité cosinus</span>
+      <span style="font-size:1.25rem;font-weight:700;color:{{if ge .Similarity 0.8}}var(--ok){{else if ge .Similarity 0.5}}var(--accent){{else}}var(--muted){{end}}">
+        {{printf "%.2f%%" .SimilarityPercent}}
+      </span>
+    </div>
+    <div style="height:10px;background:rgba(0,0,0,0.4);border-radius:999px;overflow:hidden;position:relative;margin-bottom:8px">
+      <div style="height:100%;width:{{.SimilarityBarWidth}}%;background:{{if ge .Similarity 0.8}}linear-gradient(90deg,#3b82f6,#22c55e){{else if ge .Similarity 0.5}}var(--accent){{else}}var(--muted){{end}};border-radius:999px;transition:width 0.4s ease"></div>
+    </div>
+    <div style="display:flex;justify-content:space-between;font-size:0.75rem;color:var(--muted)">
+      <span>0% (Indépendant)</span>
+      <span>50% (Proximité modérée)</span>
+      <span>100% (Identique)</span>
+    </div>
+  </div>
+  {{end}}
+
+  <div style="display:flex;flex-direction:column;gap:14px">
+    {{range $idx, $item := .Items}}
+    <div style="background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:14px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span class="badge">Index {{$item.Index}}</span>
+          {{if $item.Text}}<span style="font-size:0.85rem;color:var(--text);font-style:italic">"{{$item.Text}}"</span>{{end}}
+        </div>
+        <div class="actions">
+          <button class="btn ghost small" type="button" onclick="copyToClipboard('{{$item.JSONVector}}', this)">Copier le JSON</button>
+          <button class="btn ghost small" type="button" onclick="copyToClipboard('{{$item.CSVVector}}', this)">Copier CSV</button>
+        </div>
+      </div>
+
+      <!-- Preview bar graph / sparkline of normalized values -->
+      <div style="margin-bottom:10px">
+        <div style="font-size:0.75rem;color:var(--muted);margin-bottom:4px">Aperçu de la distribution des coefficients (premières composantes) :</div>
+        <div style="display:flex;align-items:center;gap:2px;height:24px;background:rgba(0,0,0,0.3);padding:2px 4px;border-radius:6px;overflow-x:auto">
+          {{range $item.SampleBars}}
+          <div style="flex:1;min-width:3px;height:{{.Height}}%;background:{{if .Positive}}var(--accent){{else}}#f43f5e{{end}};border-radius:1px" title="{{.Value}}"></div>
+          {{end}}
+        </div>
+      </div>
+
+      <details>
+        <summary style="font-size:0.82rem;color:var(--muted);cursor:pointer;font-weight:600">Voir les valeurs brutes ({{$item.Count}} dimensions)</summary>
+        <pre style="margin-top:8px;max-height:160px;overflow-y:auto;padding:10px;background:rgba(0,0,0,0.35);border-radius:8px;font-size:0.75rem;line-height:1.4;white-space:pre-wrap;word-break:break-all"><code>{{$item.JSONVector}}</code></pre>
+      </details>
+    </div>
+    {{end}}
+  </div>
+</div>
+{{end}}

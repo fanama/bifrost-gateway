@@ -61,7 +61,7 @@ func TestProjectConfigModelsHandler(t *testing.T) {
 	catalogUC := application.NewModelCatalogUseCase(catalogStore)
 	modelUC := application.NewModelUseCase(nil, configStore, catalogStore)
 
-	server := NewServer(nil, configUC, modelUC, projectUC, keyUC, providerUC, catalogUC, "http://localhost:11434")
+	server := NewServer(nil, configUC, modelUC, projectUC, keyUC, providerUC, catalogUC, nil, "http://localhost:11434")
 	mux := http.NewServeMux()
 	server.Register(mux)
 

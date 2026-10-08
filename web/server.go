@@ -5,8 +5,10 @@ import (
 	"embed"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"html/template"
 	"log"
+	"math"
 	"net/http"
 	"sort"
 	"strconv"
@@ -29,6 +31,7 @@ type Server struct {
 	keys       *application.APIKeyUseCase
 	providers  *application.ProviderUseCase
 	catalog    *application.ModelCatalogUseCase
+	embeddings *application.EmbeddingUseCase
 	ollamaBase string
 	templates  *template.Template
 }
@@ -41,6 +44,7 @@ func NewServer(
 	keys *application.APIKeyUseCase,
 	providers *application.ProviderUseCase,
 	catalog *application.ModelCatalogUseCase,
+	embeddings *application.EmbeddingUseCase,
 	ollamaBase string,
 ) *Server {
 	funcs := template.FuncMap{
@@ -61,7 +65,7 @@ func NewServer(
 	if err != nil {
 		log.Fatalf("parse templates: %v", err)
 	}
-	return &Server{chat: chat, configs: configs, models: models, projects: projects, keys: keys, providers: providers, catalog: catalog, ollamaBase: ollamaBase, templates: tmpl}
+	return &Server{chat: chat, configs: configs, models: models, projects: projects, keys: keys, providers: providers, catalog: catalog, embeddings: embeddings, ollamaBase: ollamaBase, templates: tmpl}
 }
 
 func (s *Server) Register(mux *http.ServeMux) {
@@ -69,6 +73,9 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /chat/send", s.chatSend)
 	mux.HandleFunc("GET /chat/configs/{cid}/edit", s.editChatConfigForm)
 	mux.HandleFunc("POST /chat/configs/{cid}", s.updateChatConfig)
+
+	mux.HandleFunc("GET /embeddings-test", s.pageEmbeddings)
+	mux.HandleFunc("POST /embeddings-test/compute", s.computeEmbeddings)
 
 	mux.HandleFunc("GET /models", s.pageModels)
 	mux.HandleFunc("POST /models", s.createModel)
@@ -317,6 +324,218 @@ func (s *Server) chatSend(w http.ResponseWriter, r *http.Request) {
 		"Messages":       result.Messages,
 		"ServedModel":    result.Model,
 		"RequestedModel": result.RequestedModel,
+	})
+}
+
+// ---- Embeddings ----
+
+type EmbedSampleBar struct {
+	Height   int
+	Value    string
+	Positive bool
+}
+
+type EmbedResultItem struct {
+	Index      int
+	Text       string
+	Count      int
+	SampleBars []EmbedSampleBar
+	JSONVector string
+	CSVVector  string
+}
+
+func cosineSimilarity(a, b []float32) float64 {
+	if len(a) == 0 || len(a) != len(b) {
+		return 0
+	}
+	var dot, normA, normB float64
+	for i := range a {
+		va := float64(a[i])
+		vb := float64(b[i])
+		dot += va * vb
+		normA += va * va
+		normB += vb * vb
+	}
+	if normA == 0 || normB == 0 {
+		return 0
+	}
+	return dot / (math.Sqrt(normA) * math.Sqrt(normB))
+}
+
+func (s *Server) pageEmbeddings(w http.ResponseWriter, r *http.Request) {
+	configs, err := s.configs.List(r.Context())
+	if err != nil {
+		s.renderToast(w, "#embed-error", err.Error())
+		return
+	}
+
+	defaultModel := ""
+	for i := range configs {
+		if configs[i].Active {
+			defaultModel = configs[i].Model
+			break
+		}
+	}
+	if defaultModel == "" && len(configs) > 0 {
+		defaultModel = configs[0].Model
+	}
+	if defaultModel == "" {
+		defaultModel = "text-embedding-3-small"
+	}
+
+	baseURL := chatAPIBaseURL(r)
+	if baseURL == "" {
+		baseURL = "http://localhost:8080"
+	}
+	curlSnippet := fmt.Sprintf(`curl %s/v1/embeddings \
+  -H "Authorization: Bearer <VOTRE_CLE_API>" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"%s","input":"Le chat dort paisiblement sur le canapé."}'`, baseURL, defaultModel)
+
+	s.render(w, "page_embeddings", map[string]any{
+		"Active":       "embeddings",
+		"Title":        "Embeddings",
+		"Configs":      configs,
+		"BaseURL":      baseURL,
+		"DefaultModel": defaultModel,
+		"CurlSnippet":  curlSnippet,
+	})
+}
+
+func (s *Server) computeEmbeddings(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		s.renderToast(w, "#embed-error", "requête invalide")
+		return
+	}
+
+	cfgID := strings.TrimSpace(r.FormValue("config_id"))
+	mode := strings.TrimSpace(r.FormValue("mode"))
+	var dims *int
+	if dStr := strings.TrimSpace(r.FormValue("dimensions")); dStr != "" {
+		if d, err := strconv.Atoi(dStr); err == nil && d > 0 {
+			dims = &d
+		}
+	}
+
+	var inputs []string
+	if mode == "compare" {
+		txtA := strings.TrimSpace(r.FormValue("input_text_a"))
+		txtB := strings.TrimSpace(r.FormValue("input_text_b"))
+		if txtA == "" || txtB == "" {
+			s.renderToast(w, "#embed-error", "les deux textes sont requis pour la comparaison")
+			return
+		}
+		inputs = []string{txtA, txtB}
+	} else {
+		txt := strings.TrimSpace(r.FormValue("input_text"))
+		if txt == "" {
+			s.renderToast(w, "#embed-error", "le texte à encoder est requis")
+			return
+		}
+		inputs = []string{txt}
+	}
+
+	var rawInput []byte
+	var err error
+	if len(inputs) == 1 {
+		rawInput, err = json.Marshal(inputs[0])
+	} else {
+		rawInput, err = json.Marshal(inputs)
+	}
+	if err != nil {
+		s.renderToast(w, "#embed-error", err.Error())
+		return
+	}
+
+	req := &domain.EmbeddingRequest{
+		Input:      rawInput,
+		Dimensions: dims,
+	}
+
+	start := time.Now()
+	resp, _, err := s.embeddings.EmbedByConfigID(r.Context(), cfgID, req)
+	if err != nil {
+		s.renderToast(w, "#embed-error", err.Error())
+		return
+	}
+	latency := time.Since(start).Milliseconds()
+
+	if len(resp.Data) == 0 {
+		s.renderToast(w, "#embed-error", "aucun vecteur renvoyé par le modèle")
+		return
+	}
+
+	var items []EmbedResultItem
+	for i, item := range resp.Data {
+		textLabel := ""
+		if i < len(inputs) {
+			textLabel = inputs[i]
+		}
+
+		var strFloats []string
+		for _, f := range item.Embedding {
+			strFloats = append(strFloats, fmt.Sprintf("%.6f", f))
+		}
+		jsonVec, _ := json.Marshal(item.Embedding)
+
+		sampleCount := 40
+		if len(item.Embedding) < sampleCount {
+			sampleCount = len(item.Embedding)
+		}
+		var maxVal float32 = 0.0001
+		for _, v := range item.Embedding[:sampleCount] {
+			abs := float32(math.Abs(float64(v)))
+			if abs > maxVal {
+				maxVal = abs
+			}
+		}
+
+		var bars []EmbedSampleBar
+		for _, v := range item.Embedding[:sampleCount] {
+			abs := float32(math.Abs(float64(v)))
+			h := int((abs / maxVal) * 90) + 10
+			if h > 100 {
+				h = 100
+			}
+			bars = append(bars, EmbedSampleBar{
+				Height:   h,
+				Value:    fmt.Sprintf("%.5f", v),
+				Positive: v >= 0,
+			})
+		}
+
+		items = append(items, EmbedResultItem{
+			Index:      item.Index,
+			Text:       textLabel,
+			Count:      len(item.Embedding),
+			SampleBars: bars,
+			JSONVector: string(jsonVec),
+			CSVVector:  strings.Join(strFloats, ","),
+		})
+	}
+
+	hasSim := false
+	var sim float64
+	var simPct float64
+	var simBarWidth float64
+	if mode == "compare" && len(resp.Data) >= 2 {
+		hasSim = true
+		sim = cosineSimilarity(resp.Data[0].Embedding, resp.Data[1].Embedding)
+		simPct = sim * 100
+		simBarWidth = math.Max(0, math.Min(100, sim*100))
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	s.render(w, "embed_result", map[string]any{
+		"Model":              resp.Model,
+		"Dimensions":         len(resp.Data[0].Embedding),
+		"Usage":              resp.Usage,
+		"LatencyMS":          latency,
+		"Items":              items,
+		"HasSimilarity":      hasSim,
+		"Similarity":         sim,
+		"SimilarityPercent":  simPct,
+		"SimilarityBarWidth": simBarWidth,
 	})
 }
 

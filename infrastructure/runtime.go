@@ -2,6 +2,7 @@ package infrastructure
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"os"
@@ -219,6 +220,95 @@ func (p *BifrostLLMProvider) ChatStream(ctx context.Context, cfg *domain.ChatCon
 	}()
 
 	return out, nil
+}
+
+var _ domain.EmbeddingProvider = (*BifrostLLMProvider)(nil)
+
+func (p *BifrostLLMProvider) Embed(ctx context.Context, cfg *domain.ChatConfig, req *domain.EmbeddingRequest) (*domain.EmbeddingResponse, error) {
+	if req == nil || len(req.Input) == 0 {
+		return nil, &domain.InvalidRequestError{Param: "input", Reason: "input is required"}
+	}
+	var input schemas.EmbeddingInput
+	if err := json.Unmarshal(req.Input, &input); err != nil {
+		return nil, &domain.InvalidRequestError{Param: "input", Reason: "invalid input format: " + err.Error()}
+	}
+	if input.Text == nil && len(input.Texts) == 0 && len(input.Embedding) == 0 && len(input.Embeddings) == 0 {
+		return nil, &domain.InvalidRequestError{Param: "input", Reason: "input is required"}
+	}
+
+	provider, err := ToModelProvider(cfg.Provider)
+	if err != nil {
+		return nil, err
+	}
+
+	client, err := p.clientFor(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	model := cfg.Model
+	if req.Model != "" {
+		model = req.Model
+	}
+
+	var params *schemas.EmbeddingParameters
+	if req.EncodingFormat != nil || req.Dimensions != nil {
+		params = &schemas.EmbeddingParameters{
+			EncodingFormat: req.EncodingFormat,
+			Dimensions:     req.Dimensions,
+		}
+	}
+
+	resp, err := client.Embedding(ctx, provider, model, &input, params)
+	if err != nil {
+		return nil, err
+	}
+
+	return toDomainEmbeddingResponse(resp, model), nil
+}
+
+func toDomainEmbeddingResponse(resp *schemas.BifrostEmbeddingResponse, defaultModel string) *domain.EmbeddingResponse {
+	if resp == nil {
+		return &domain.EmbeddingResponse{
+			Object: "list",
+			Model:  defaultModel,
+		}
+	}
+	model := resp.Model
+	if model == "" {
+		model = defaultModel
+	}
+	obj := resp.Object
+	if obj == "" {
+		obj = "list"
+	}
+	data := make([]domain.EmbeddingItem, len(resp.Data))
+	for i, d := range resp.Data {
+		itemObj := d.Object
+		if itemObj == "" {
+			itemObj = "embedding"
+		}
+		data[i] = domain.EmbeddingItem{
+			Index:        d.Index,
+			Object:       itemObj,
+			Embedding:    d.Embedding.EmbeddingArray,
+			EmbeddingStr: d.Embedding.EmbeddingStr,
+		}
+	}
+	usage := domain.EmbeddingUsage{}
+	if resp.Usage != nil {
+		usage.PromptTokens = resp.Usage.PromptTokens
+		usage.TotalTokens = resp.Usage.TotalTokens
+		if usage.TotalTokens == 0 && usage.PromptTokens > 0 {
+			usage.TotalTokens = usage.PromptTokens
+		}
+	}
+	return &domain.EmbeddingResponse{
+		Object: obj,
+		Data:   data,
+		Model:  model,
+		Usage:  usage,
+	}
 }
 
 // toBifrostMessages convertit les messages du domaine vers Bifrost. Partage par

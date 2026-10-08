@@ -48,6 +48,30 @@ func (c *BifrostClient) ChatCompletion(
 	return resp, nil
 }
 
+func (c *BifrostClient) Embedding(
+	ctx context.Context,
+	provider schemas.ModelProvider,
+	model string,
+	input *schemas.EmbeddingInput,
+	params *schemas.EmbeddingParameters,
+) (*schemas.BifrostEmbeddingResponse, error) {
+	req := &schemas.BifrostEmbeddingRequest{
+		Provider: provider,
+		Model:    model,
+		Input:    input,
+		Params:   params,
+	}
+
+	resp, bifrostErr := c.client.EmbeddingRequest(
+		schemas.NewBifrostContext(ctx, schemas.NoDeadline),
+		req,
+	)
+	if bifrostErr != nil {
+		return nil, formatBifrostError(bifrostErr)
+	}
+	return resp, nil
+}
+
 // ProviderError conserve les champs structurants d'un echec provider.
 //
 // L'adaptateur doit pouvoir decider si un echec merite une bascule vers un

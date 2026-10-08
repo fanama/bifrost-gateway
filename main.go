@@ -163,14 +163,18 @@ func main() {
 	catalogUseCase := application.NewModelCatalogUseCase(catalogStore)
 	modelsHandler := handlers.NewModelsHandler(authUseCase, modelUseCase)
 
+	embeddingUseCase := application.NewEmbeddingUseCase(configStore, bifrostProvider)
+	embeddingHandler := handlers.NewEmbeddingHandler(authUseCase, embeddingUseCase, application.NewConfigUseCase(configStore))
+
 	mux := http.NewServeMux()
-	handlers.RegisterRoutes(mux, chatHandler, modelsHandler)
+	handlers.RegisterRoutes(mux, chatHandler, modelsHandler, embeddingHandler)
 	mux.HandleFunc("/chat/completions", chatHandler.HandleChatCompletion)
+	mux.HandleFunc("/embeddings", embeddingHandler.HandleEmbedding)
 	mux.HandleFunc("/health/liveness", chatHandler.HandleHealth)
 	mux.HandleFunc("/health/readiness", chatHandler.HandleHealth)
 	mux.HandleFunc("/health/test_connection", chatHandler.HandleHealth)
 
-	ui := web.NewServer(chatUseCase, configUseCase, modelUseCase, projectUseCase, keyUseCase, providerUseCase, catalogUseCase, ollamaBaseURL())
+	ui := web.NewServer(chatUseCase, configUseCase, modelUseCase, projectUseCase, keyUseCase, providerUseCase, catalogUseCase, embeddingUseCase, ollamaBaseURL())
 	ui.Register(mux)
 
 	middleware := loggingMiddleware(mux)

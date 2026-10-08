@@ -27,6 +27,24 @@ func (s stubProvider) Chat(context.Context, *domain.ChatConfig, []domain.ChatMes
 	return domain.LLMResult{Content: s.reply, Model: "stub-model"}, nil
 }
 
+func (s stubProvider) Embed(ctx context.Context, cfg *domain.ChatConfig, req *domain.EmbeddingRequest) (*domain.EmbeddingResponse, error) {
+	return &domain.EmbeddingResponse{
+		Object: "list",
+		Model:  cfg.Model,
+		Data: []domain.EmbeddingItem{
+			{
+				Index:     0,
+				Object:    "embedding",
+				Embedding: []float32{0.0023, -0.0093, 0.015},
+			},
+		},
+		Usage: domain.EmbeddingUsage{
+			PromptTokens: 8,
+			TotalTokens:  8,
+		},
+	}, nil
+}
+
 // newOpenAIMux cree un projet, une cle et une configuration active, puis
 // renvoie un mux equipe comme la production et la cle en clair, seule fois ou
 // elle existe.
@@ -86,8 +104,19 @@ func newMuxWithProvider(t *testing.T, masterKey string, provider domain.LLMProvi
 		catalog,
 	))
 
+	var embedProvider domain.EmbeddingProvider
+	if ep, ok := provider.(domain.EmbeddingProvider); ok {
+		embedProvider = ep
+	}
+	embeddingUseCase := application.NewEmbeddingUseCase(configs, embedProvider)
+	embeddings := handlers.NewEmbeddingHandler(auth, embeddingUseCase, configUseCase)
+
 	mux := http.NewServeMux()
-	handlers.RegisterRoutes(mux, chat, models)
+	handlers.RegisterRoutes(mux, chat, models, embeddings)
+	mux.HandleFunc("/chat/completions", chat.HandleChatCompletion)
+	if embeddings != nil {
+		mux.HandleFunc("/embeddings", embeddings.HandleEmbedding)
+	}
 	return mux, plaintext
 }
 
@@ -615,7 +644,7 @@ func TestUnknownV1RouteReturnsJSONError(t *testing.T) {
 	mux, _ := newOpenAIMux(t, "")
 
 	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, request(t, http.MethodPost, "/v1/embeddings", "master-key", map[string]any{}))
+	mux.ServeHTTP(rec, request(t, http.MethodPost, "/v1/unknown_endpoint", "master-key", map[string]any{}))
 
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d", rec.Code)
@@ -627,7 +656,7 @@ func TestUnknownV1RouteReturnsJSONError(t *testing.T) {
 	if e["code"] != "invalid_url" {
 		t.Errorf("expected code invalid_url, got %v", e["code"])
 	}
-	if msg, _ := e["message"].(string); !strings.Contains(msg, "/v1/embeddings") {
+	if msg, _ := e["message"].(string); !strings.Contains(msg, "/v1/unknown_endpoint") {
 		t.Errorf("message should echo the requested URL, got %q", msg)
 	}
 }
@@ -694,5 +723,95 @@ func TestEmptyMessagesRejectedOnEveryPathAndMode(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestEmbeddingsContract(t *testing.T) {
+	mux, secret := newOpenAIMux(t, "")
+
+	// 1. Success on /v1/embeddings
+	body := map[string]any{
+		"model": "text-embedding-3-small",
+		"input": "The quick brown fox",
+	}
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, request(t, http.MethodPost, "/v1/embeddings", secret, body))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
+		t.Errorf("expected Content-Type application/json, got %q", ct)
+	}
+
+	var resp struct {
+		Object string `json:"object"`
+		Data   []struct {
+			Object    string    `json:"object"`
+			Embedding []float32 `json:"embedding"`
+			Index     int       `json:"index"`
+		} `json:"data"`
+		Model string `json:"model"`
+		Usage struct {
+			PromptTokens int `json:"prompt_tokens"`
+			TotalTokens  int `json:"total_tokens"`
+		} `json:"usage"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode embeddings response: %v", err)
+	}
+	if resp.Object != "list" {
+		t.Errorf("expected object 'list', got %q", resp.Object)
+	}
+	if len(resp.Data) == 0 {
+		t.Fatalf("expected at least 1 embedding data item")
+	}
+	if resp.Data[0].Object != "embedding" {
+		t.Errorf("expected data[0].object 'embedding', got %q", resp.Data[0].Object)
+	}
+	if len(resp.Data[0].Embedding) == 0 {
+		t.Errorf("expected non-empty float embedding")
+	}
+	if resp.Usage.TotalTokens == 0 {
+		t.Errorf("expected non-zero total tokens")
+	}
+
+	// 2. Success on /embeddings alias
+	recAlias := httptest.NewRecorder()
+	mux.ServeHTTP(recAlias, request(t, http.MethodPost, "/embeddings", secret, body))
+	if recAlias.Code != http.StatusOK {
+		t.Fatalf("expected 200 on /embeddings alias, got %d: %s", recAlias.Code, recAlias.Body)
+	}
+
+	// 3. Unauthorized when missing or wrong key
+	recUnauth := httptest.NewRecorder()
+	mux.ServeHTTP(recUnauth, request(t, http.MethodPost, "/v1/embeddings", "sk-invalid", body))
+	if recUnauth.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 on invalid key, got %d", recUnauth.Code)
+	}
+	errUnauth := decodeError(t, recUnauth.Body.Bytes())
+	if errUnauth["type"] != "authentication_error" {
+		t.Errorf("expected authentication_error, got %v", errUnauth["type"])
+	}
+
+	// 4. Missing input returns 400
+	recMissing := httptest.NewRecorder()
+	mux.ServeHTTP(recMissing, request(t, http.MethodPost, "/v1/embeddings", secret, map[string]any{"model": "test"}))
+	if recMissing.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 on missing input, got %d", recMissing.Code)
+	}
+	errMissing := decodeError(t, recMissing.Body.Bytes())
+	if errMissing["type"] != "invalid_request_error" {
+		t.Errorf("expected invalid_request_error, got %v", errMissing["type"])
+	}
+	if errMissing["param"] != "input" {
+		t.Errorf("expected param 'input', got %v", errMissing["param"])
+	}
+
+	// 5. Method not allowed on GET
+	recMethod := httptest.NewRecorder()
+	mux.ServeHTTP(recMethod, request(t, http.MethodGet, "/v1/embeddings", secret, nil))
+	if recMethod.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405 on GET, got %d", recMethod.Code)
 	}
 }
