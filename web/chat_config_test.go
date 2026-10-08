@@ -46,12 +46,12 @@ func TestChatConfigEditFlow(t *testing.T) {
 	modelUC := application.NewModelUseCase(nil, configStore, catalogStore)
 
 	cfg, err := configUC.Create(ctx, &domain.ChatConfig{
-		ProjectID:   proj.ID,
-		Name:        "Config Alpha",
-		Provider:    "mistral",
-		Model:       "mistral-large",
+		ProjectID:    proj.ID,
+		Name:         "Config Alpha",
+		Provider:     "mistral",
+		Model:        "mistral-large",
 		SystemPrompt: "Tu es un assistant utile",
-		Active:      true,
+		Active:       true,
 	})
 	if err != nil {
 		t.Fatalf("create config: %v", err)

@@ -15,10 +15,16 @@ func NewModelCatalogUseCase(catalog domain.ModelCatalogRepository) *ModelCatalog
 	return &ModelCatalogUseCase{EntityUseCase: NewEntityUseCase[domain.CatalogModel, domain.ModelCatalogRepository](catalog)}
 }
 
-func (u *ModelCatalogUseCase) Create(ctx context.Context, name, provider string) (*domain.CatalogModel, error) {
+// Create ajoute un modele au catalogue. kind vaut ModelKindChat ou
+// ModelKindEmbedding (une valeur vide est normalisee en chat). Reajouter un
+// modele deja present est idempotent ; si le kind force differe de celui
+// stocke, il est corrige sur place, pour qu'un premier ajout mal type puisse
+// etre repasse au bon type sans suppression manuelle.
+func (u *ModelCatalogUseCase) Create(ctx context.Context, name, provider, kind string) (*domain.CatalogModel, error) {
 	m := &domain.CatalogModel{
 		Name:     strings.TrimSpace(name),
 		Provider: strings.ToLower(strings.TrimSpace(provider)),
+		Kind:     domain.NormalizeModelKind(kind),
 	}
 	if err := m.Validate(); err != nil {
 		return nil, err
@@ -27,8 +33,16 @@ func (u *ModelCatalogUseCase) Create(ctx context.Context, name, provider string)
 	if err != nil {
 		return nil, err
 	}
-	for _, e := range existing {
-		if strings.EqualFold(e.Name, m.Name) && strings.EqualFold(e.Provider, m.Provider) {
+	for i := range existing {
+		if strings.EqualFold(existing[i].Name, m.Name) && strings.EqualFold(existing[i].Provider, m.Provider) {
+			e := existing[i]
+			if strings.TrimSpace(kind) != "" && e.Kind != m.Kind {
+				e.Kind = m.Kind
+				if err := u.repo.Update(ctx, &e); err != nil {
+					return nil, err
+				}
+				return &e, nil
+			}
 			return &e, nil
 		}
 	}

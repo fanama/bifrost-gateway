@@ -100,6 +100,12 @@ func main() {
 
 	bifrostProvider := infrastructure.NewBifrostLLMProvider(providerStore)
 
+	// Moteur de chat ONNX local : modeles sous models/onnx/chat/<id>/,
+	// chargement paresseux au premier appel, meme soclet purego sans CGO que
+	// l'embedder. Le routeur ci-dessous le choisit pour les configs provider
+	// "onnx", tout le reste partant vers Bifrost.
+	onnxChatProvider := infrastructure.NewOnnxChatProvider(infrastructure.DefaultOnnxChatOptions())
+
 	// Le chat doit voir l'etat le plus frais possible des configs, donc recoit
 	// le store non decoré ; seul l'appel provider est mis en cache.
 	//
@@ -115,7 +121,7 @@ func main() {
 	// Le routeur doit entourer Bifrost et le classifieur doit appeler Bifrost
 	// directement : passer par le provider decoré ferait boucler le classifieur
 	// sur lui-meme.
-	var llmProvider domain.LLMProvider = bifrostProvider
+	var llmProvider domain.LLMProvider = infrastructure.NewOnnxChatRouter(onnxChatProvider, bifrostProvider).WithCatalog(catalogStore)
 
 	if cfg.Routing.Enabled {
 		// Quand le routeur escalade vers un autre tier, il change de provider :
@@ -172,19 +178,57 @@ func main() {
 	if err := ensureLocalProvider(ctx, providerUseCase); err != nil {
 		log.Printf("Failed to ensure local provider: %v", err)
 	}
-	if _, err := catalogUseCase.Create(ctx, infrastructure.LocalEmbeddingModel, infrastructure.LocalProviderName); err != nil {
+	// Le provider "onnx" est la porte du chat et de l'embedding locaux :
+	// sans lui, le select provider de la forme de configuration ne proposerait
+	// jamais le moteur embarque.
+	if err := ensureNamedProvider(ctx, providerUseCase, domain.ProviderOnnx); err != nil {
+		log.Printf("Failed to ensure onnx provider: %v", err)
+	}
+	if _, err := catalogUseCase.Create(ctx, infrastructure.LocalEmbeddingModel, infrastructure.LocalProviderName, domain.ModelKindEmbedding); err != nil {
 		log.Printf("Failed to ensure local embedding model: %v", err)
+	}
+
+	// Les modeles ONNX locaux discovers sous models/onnx/ rejoignent le
+	// catalogue comme modeles d'embedding : la page Modeles les montre (et
+	// permet de les retirer), le testeur les propose, l'API les route vers le
+	// moteur ONNX. Le reajout est idempotent — un demarrage suivant ne
+	// duplique rien. Un repertoire absent n'est pas une panne : c'est
+	// "aucun modele local", cas documente du depot sans assets.
+	if ids, err := infrastructure.ListOnnxModels(infrastructure.OnnxModelsDir); err != nil && !errors.Is(err, os.ErrNotExist) {
+		log.Printf("ONNX model discovery failed: %v", err)
+	} else {
+		for _, id := range ids {
+			if _, err := catalogUseCase.Create(ctx, domain.OnnxModelPrefix+id, domain.ProviderOnnx, domain.ModelKindEmbedding); err != nil {
+				log.Printf("Failed to seed ONNX model %q: %v", id, err)
+			}
+		}
+	}
+
+	// Les modeles de chat ONNX discovers sous models/onnx/chat/ rejoignent
+	// le catalogue comme modeles de chat : la page Modeles les propose, et le
+	// routeur de chat les execute localement (provider "onnx"). Reajout
+	// idempotent, repertoire absent non bloquant — meme contrat que le seed
+	// d'embedding ci-dessus.
+	if ids, err := infrastructure.ListOnnxChatModels(infrastructure.OnnxChatModelsDir); err != nil && !errors.Is(err, os.ErrNotExist) {
+		log.Printf("ONNX chat model discovery failed: %v", err)
+	} else {
+		for _, id := range ids {
+			if _, err := catalogUseCase.Create(ctx, domain.OnnxModelPrefix+id, domain.ProviderOnnx, domain.ModelKindChat); err != nil {
+				log.Printf("Failed to seed ONNX chat model %q: %v", id, err)
+			}
+		}
 	}
 
 	// Routage des embeddings sur trois moteurs : le runtime Go embarque, le
 	// runtime ONNX in-process (artefacts sous models/onnx/, chargement
 	// paresseux au premier appel), et Bifrost en repli pour tout le reste.
-	// Le choix se fait par le modele demande (liste curatee) ou le provider
-	// de la configuration ; un echec local est remonte tel quel, sans bascule
-	// silencieuse vers un provider distant.
+	// Le choix se fait par le modele demande (liste curatee, identifiant
+	// onnx/<repertoire>, ou modele du catalogue type embedding) ou par le
+	// provider de la configuration ; un echec local est remonte tel quel,
+	// sans bascule silencieuse vers un provider distant.
 	localEmbedder := infrastructure.NewLocalEmbedder(infrastructure.LocalEmbedderOptions{})
 	onnxEmbedder := infrastructure.NewOnnxEmbedder(infrastructure.DefaultOnnxEmbedderOptions())
-	embeddingProvider := infrastructure.NewEmbeddingRouter(localEmbedder, onnxEmbedder, bifrostProvider)
+	embeddingProvider := infrastructure.NewEmbeddingRouter(localEmbedder, onnxEmbedder, bifrostProvider).WithCatalog(catalogStore)
 	embeddingUseCase := application.NewEmbeddingUseCase(configStore, embeddingProvider)
 	embeddingHandler := handlers.NewEmbeddingHandler(authUseCase, embeddingUseCase, application.NewConfigUseCase(configStore))
 
@@ -280,16 +324,22 @@ func ollamaBaseURL() string {
 // jamais apparaitre, et le select provider du formulaire de configuration ne
 // proposerait pas le runtime embarque. Cette garantie couvre les deux cas.
 func ensureLocalProvider(ctx context.Context, uc *application.ProviderUseCase) error {
+	return ensureNamedProvider(ctx, uc, infrastructure.LocalProviderName)
+}
+
+// ensureNamedProvider cree le provider s'il est absent (meme garantie que le
+// seed du premier demarrage, appliquee a un nom supplementaire).
+func ensureNamedProvider(ctx context.Context, uc *application.ProviderUseCase, name string) error {
 	list, err := uc.List(ctx)
 	if err != nil {
 		return err
 	}
 	for i := range list {
-		if strings.EqualFold(list[i].Name, infrastructure.LocalProviderName) {
+		if strings.EqualFold(list[i].Name, name) {
 			return nil
 		}
 	}
-	_, err = uc.Create(ctx, infrastructure.LocalProviderName, "", "")
+	_, err = uc.Create(ctx, name, "", "")
 	return err
 }
 

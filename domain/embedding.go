@@ -16,6 +16,10 @@ const (
 	// ProviderOnnx designe le moteur ONNX local (pas un provider distant :
 	// il n'a ni URL ni cle, l'inference se fait in-process).
 	ProviderOnnx = "onnx"
+	// OnnxModelPrefix est le préfixe des identifiants de modeles ONNX locaux :
+	// "onnx/<repertoire>" pointe vers models/onnx/<repertoire>/. Il sert aux
+	// identifiants, jamais aux chemins : c'est l'embedder qui le retire.
+	OnnxModelPrefix = "onnx/"
 	// ModelOnnxMiniLM est le modele sémantique ONNX embarqué (384 dims).
 	ModelOnnxMiniLM = "onnx/all-MiniLM-L6-v2"
 )
@@ -70,6 +74,28 @@ func FindEmbeddingChoice(model string) *EmbeddingChoice {
 		}
 	}
 	return nil
+}
+
+// EmbeddingChoiceFromModel traduit un modele du catalogue en choix
+// d'embedding propose au testeur et resoluble par le routeur. Seuls les
+// modeles declares de type embedding produisent un choix : un modele de chat
+// du meme catalogue ne doit jamais atterrir dans le select du testeur ni
+// detourner un appel d'API dont le modele serait homonyme.
+func EmbeddingChoiceFromModel(m ModelInfo) (EmbeddingChoice, bool) {
+	if !strings.EqualFold(strings.TrimSpace(m.Kind), ModelKindEmbedding) {
+		return EmbeddingChoice{}, false
+	}
+	name := strings.TrimSpace(m.Name)
+	provider := strings.ToLower(strings.TrimSpace(m.Provider))
+	if name == "" || provider == "" {
+		return EmbeddingChoice{}, false
+	}
+	return EmbeddingChoice{
+		Model:    name,
+		Provider: provider,
+		Label:    name + " — " + provider,
+		Hint:     "Modèle ajouté depuis la page Modèles (type embedding), exécuté par le moteur " + provider + ".",
+	}, true
 }
 
 type EmbeddingRequest struct {

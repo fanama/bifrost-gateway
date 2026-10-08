@@ -404,3 +404,125 @@ func TestEmbeddingRouterUnknownModelFallsBackToConfig(t *testing.T) {
 		t.Errorf("config must pass through unchanged, got %+v", inner.cfg)
 	}
 }
+
+// fakeCatalogStore satisfait domain.ModelCatalogRepository pour les tests de
+// routage par catalogue.
+type fakeCatalogStore struct {
+	items []domain.CatalogModel
+	err   error
+}
+
+func (f *fakeCatalogStore) List(context.Context) ([]domain.CatalogModel, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return append([]domain.CatalogModel(nil), f.items...), nil
+}
+
+func (f *fakeCatalogStore) Get(_ context.Context, id string) (*domain.CatalogModel, error) {
+	for i := range f.items {
+		if f.items[i].ID == id {
+			return &f.items[i], nil
+		}
+	}
+	return nil, domain.ErrCatalogModelNotFound
+}
+
+func (f *fakeCatalogStore) Create(context.Context, *domain.CatalogModel) error { return nil }
+func (f *fakeCatalogStore) Update(context.Context, *domain.CatalogModel) error { return nil }
+func (f *fakeCatalogStore) Delete(context.Context, string) error {
+	return domain.ErrCatalogModelNotFound
+}
+
+// Un modele ajoute depuis la page Modeles (type embedding) est route par le
+// catalogue comme un choix curate : moteur derive du provider enregistre, URL
+// et cle de la config active effacees.
+func TestEmbeddingRouterRoutesCatalogEmbeddingModel(t *testing.T) {
+	inner := &countingEmbedder{}
+	router := NewEmbeddingRouter(&countingEmbedder{}, &countingEmbedder{}, inner).WithCatalog(&fakeCatalogStore{
+		items: []domain.CatalogModel{{ID: "m1", Name: "bge-tiny-fr", Provider: "ollama", Kind: domain.ModelKindEmbedding}},
+	})
+
+	cfg := &domain.ChatConfig{
+		Provider:  "mistral",
+		Model:     "mistral-small",
+		BaseURL:   "https://api.mistral.ai",
+		APIKey:    "cle-secrete",
+		ProjectID: "proj-1",
+	}
+	req := &domain.EmbeddingRequest{Input: embedJSON(t, "x"), Model: "bge-tiny-fr"}
+	if _, err := router.Embed(context.Background(), cfg, req); err != nil {
+		t.Fatalf("catalog route: %v", err)
+	}
+	if inner.calls != 1 {
+		t.Fatalf("expected inner, got %d calls", inner.calls)
+	}
+	eff := inner.cfg
+	if eff.Provider != "ollama" || eff.Model != "bge-tiny-fr" {
+		t.Errorf("expected ollama/bge-tiny-fr, got %s/%s", eff.Provider, eff.Model)
+	}
+	if eff.BaseURL != "" || eff.APIKey != "" {
+		t.Errorf("credentials must be cleared, got BaseURL=%q APIKey=%q", eff.BaseURL, eff.APIKey)
+	}
+	if eff.ProjectID != "proj-1" {
+		t.Errorf("project must be preserved, got %q", eff.ProjectID)
+	}
+}
+
+// Un modele de chat homonyme du catalogue ne detourne pas l'appel : seul le
+// kind embedding ouvre le routage, sinon l'API suivrait la config activee.
+func TestEmbeddingRouterIgnoresCatalogChatModel(t *testing.T) {
+	inner := &countingEmbedder{}
+	router := NewEmbeddingRouter(&countingEmbedder{}, &countingEmbedder{}, inner).WithCatalog(&fakeCatalogStore{
+		items: []domain.CatalogModel{{ID: "m1", Name: "mistral-large", Provider: "mistral", Kind: domain.ModelKindChat}},
+	})
+
+	cfg := &domain.ChatConfig{Provider: "mistral", Model: "mistral-small", APIKey: "k"}
+	req := &domain.EmbeddingRequest{Input: embedJSON(t, "x"), Model: "mistral-large"}
+	if _, err := router.Embed(context.Background(), cfg, req); err != nil {
+		t.Fatalf("chat model route: %v", err)
+	}
+	if inner.calls != 1 {
+		t.Fatalf("expected inner, got %d calls", inner.calls)
+	}
+	if inner.cfg.Model != "mistral-small" || inner.cfg.APIKey != "k" {
+		t.Errorf("config must pass through unchanged, got %+v", inner.cfg)
+	}
+}
+
+// Un identifiant onnx/<repertoire> route vers le moteur ONNX meme sans entree
+// au catalogue : les artefacts sur disque font foi, pas une table.
+func TestEmbeddingRouterRoutesOnnxPrefixWithoutCatalog(t *testing.T) {
+	onnx := &countingEmbedder{}
+	router := NewEmbeddingRouter(&countingEmbedder{}, onnx, &countingEmbedder{})
+
+	req := &domain.EmbeddingRequest{Input: embedJSON(t, "x"), Model: "onnx/paraphrase-MiniLM-L3-v2"}
+	if _, err := router.Embed(context.Background(), &domain.ChatConfig{Provider: "mistral"}, req); err != nil {
+		t.Fatalf("onnx prefix route: %v", err)
+	}
+	if onnx.calls != 1 {
+		t.Fatalf("expected onnx, got %d calls", onnx.calls)
+	}
+	if onnx.cfg.Model != "onnx/paraphrase-MiniLM-L3-v2" {
+		t.Errorf("model must be carried, got %q", onnx.cfg.Model)
+	}
+}
+
+// Une panne de lecture du catalogue retombe sur la configuration activee :
+// la base indisponible ne doit pas convertir chaque embed en erreur 500
+// prématurée — c'est au provider distant de juger le modele inconnu.
+func TestEmbeddingRouterCatalogErrorFallsBackToConfig(t *testing.T) {
+	inner := &countingEmbedder{}
+	router := NewEmbeddingRouter(&countingEmbedder{}, &countingEmbedder{}, inner).WithCatalog(&fakeCatalogStore{
+		err: errors.New("db down"),
+	})
+
+	cfg := &domain.ChatConfig{Provider: "openai", Model: "text-embedding-3-small", APIKey: "k"}
+	req := &domain.EmbeddingRequest{Input: embedJSON(t, "x"), Model: "modele-inconnu"}
+	if _, err := router.Embed(context.Background(), cfg, req); err != nil {
+		t.Fatalf("expected fallback, got %v", err)
+	}
+	if inner.calls != 1 || inner.cfg.APIKey != "k" {
+		t.Errorf("expected unchanged config fallback, got calls=%d cfg=%+v", inner.calls, inner.cfg)
+	}
+}

@@ -362,10 +362,62 @@ func cosineSimilarity(a, b []float32) float64 {
 	return dot / (math.Sqrt(normA) * math.Sqrt(normB))
 }
 
+// embeddingChoices rend la liste complete proposee au testeur : la liste
+// curatee, puis les modeles du catalogue declares de type embedding (ajoutes
+// depuis la page Modeles), sans doublon par identifiant. Une erreur de lecture
+// est remontee : taire le catalogue priverait silencieusement l'utilisateur
+// de ses propres modeles.
+func (s *Server) embeddingChoices(ctx context.Context) ([]domain.EmbeddingChoice, error) {
+	choices := make([]domain.EmbeddingChoice, 0, len(domain.EmbeddingChoices)+4)
+	seen := make(map[string]bool, len(domain.EmbeddingChoices)+4)
+	for _, c := range domain.EmbeddingChoices {
+		choices = append(choices, c)
+		seen[strings.ToLower(c.Model)] = true
+	}
+	models, err := s.models.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, m := range models {
+		choice, ok := domain.EmbeddingChoiceFromModel(m)
+		if !ok {
+			continue
+		}
+		key := strings.ToLower(choice.Model)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		choices = append(choices, choice)
+	}
+	return choices, nil
+}
+
+// findEmbeddingChoice cherche un modele dans la liste complete du testeur,
+// insensible a la casse : un modele issu du catalogue se selectionne et se
+// resout exactement comme un choix curate.
+func (s *Server) findEmbeddingChoice(ctx context.Context, modelID string) (*domain.EmbeddingChoice, error) {
+	if choice := domain.FindEmbeddingChoice(modelID); choice != nil {
+		return choice, nil
+	}
+	choices, err := s.embeddingChoices(ctx)
+	if err != nil {
+		return nil, err
+	}
+	name := strings.TrimSpace(modelID)
+	for i := range choices {
+		if strings.EqualFold(choices[i].Model, name) {
+			return &choices[i], nil
+		}
+	}
+	return nil, nil
+}
+
 // pageEmbeddings rend le testeur. La page expose la liste curatee des
-// modeles d'embedding (domain.EmbeddingChoices) : c'est le moteur selectionne
-// ici qui compte, jamais la configuration du projet. L'exemple cURL part du
-// modele par defaut et suit la selection via updateCurlSnippet.
+// modeles d'embedding (domain.EmbeddingChoices) completee par les modeles du
+// catalogue declares de type embedding : c'est le moteur selectionne ici qui
+// compte, jamais la configuration du projet. L'exemple cURL part du modele
+// par defaut et suit la selection via updateCurlSnippet.
 func (s *Server) pageEmbeddings(w http.ResponseWriter, r *http.Request) {
 	baseURL := chatAPIBaseURL(r)
 	if baseURL == "" {
@@ -376,12 +428,17 @@ func (s *Server) pageEmbeddings(w http.ResponseWriter, r *http.Request) {
   -H "Content-Type: application/json" \
   -d '{"model":"%s","input":"Le chat dort paisiblement sur le canapé."}'`, baseURL, domain.ModelLocalEmbedding)
 
+	choices, err := s.embeddingChoices(r.Context())
+	if err != nil {
+		s.renderToast(w, "#embed-error", err.Error())
+		return
+	}
 	s.render(w, "page_embeddings", map[string]any{
 		"Active":       "embeddings",
 		"Title":        "Embeddings",
 		"BaseURL":      baseURL,
 		"DefaultModel": domain.ModelLocalEmbedding,
-		"EmbedChoices": domain.EmbeddingChoices,
+		"EmbedChoices": choices,
 		"CurlSnippet":  curlSnippet,
 	})
 }
@@ -396,7 +453,11 @@ func (s *Server) computeEmbeddings(w http.ResponseWriter, r *http.Request) {
 	if modelID == "" {
 		modelID = domain.ModelLocalEmbedding
 	}
-	choice := domain.FindEmbeddingChoice(modelID)
+	choice, err := s.findEmbeddingChoice(r.Context(), modelID)
+	if err != nil {
+		s.renderToast(w, "#embed-error", err.Error())
+		return
+	}
 	if choice == nil {
 		s.renderToast(w, "#embed-error", "modèle d'embedding inconnu : "+modelID)
 		return
@@ -429,7 +490,6 @@ func (s *Server) computeEmbeddings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var rawInput []byte
-	var err error
 	if len(inputs) == 1 {
 		rawInput, err = json.Marshal(inputs[0])
 	} else {
@@ -445,10 +505,10 @@ func (s *Server) computeEmbeddings(w http.ResponseWriter, r *http.Request) {
 		Dimensions: dims,
 	}
 
-	// Le testeur ne choisit que dans la liste curatee : la configuration du
-	// projet est ignoree, le moteur derive du modele selectionne (local, ONNX,
-	// Ollama). Un echec de moteur remonte tel quel, sans repli silencieux
-	// vers un autre provider.
+	// Le testeur ne choisit que dans la liste curatee ou le catalogue
+	// (modeles type embedding) : la configuration du projet est ignoree, le
+	// moteur derive du modele selectionne (local, ONNX, Ollama). Un echec de
+	// moteur remonte tel quel, sans repli silencieux vers un autre provider.
 	selectedCfg := &domain.ChatConfig{
 		Name:     "Testeur d'embeddings",
 		Provider: choice.Provider,
@@ -646,10 +706,11 @@ func (s *Server) createModel(w http.ResponseWriter, r *http.Request) {
 	}
 	name := r.FormValue("name")
 	provider := r.FormValue("provider")
+	kind := r.FormValue("kind")
 	if provider == "" {
 		provider = "ollama"
 	}
-	if _, err := s.catalog.Create(r.Context(), name, provider); err != nil {
+	if _, err := s.catalog.Create(r.Context(), name, provider, kind); err != nil {
 		s.renderToast(w, "#models-error", err.Error())
 		return
 	}

@@ -23,6 +23,13 @@
           {{end}}
         </select>
       </label>
+      <label>Type
+        <select name="kind" required>
+          <option value="chat" selected>Chat</option>
+          <option value="embedding">Embedding (vecteurs)</option>
+        </select>
+      </label>
+      <p class="muted" style="font-size:0.78rem;margin:0">Un modèle « embedding » rejoint le select du testeur (page Embeddings) et l'API /v1/embeddings.</p>
       <div style="display:flex;gap:10px">
         <button class="btn" type="submit">Ajouter au catalogue</button>
         <button class="btn ghost" type="button" onclick="this.closest('dialog').close()">Annuler</button>
@@ -41,12 +48,13 @@
 {{define "models_list"}}
 <div class="table-wrap">
   <table>
-    <thead><tr><th>Modele</th><th>Provider</th><th>Source</th><th></th></tr></thead>
+    <thead><tr><th>Modele</th><th>Provider</th><th>Type</th><th>Source</th><th></th></tr></thead>
     <tbody>
     {{range .Models}}
       <tr>
         <td>{{.Name}}</td>
         <td>{{.Provider}}</td>
+        <td class="muted">{{if .Kind}}{{.Kind}}{{else}}chat{{end}}</td>
         <td class="muted">{{.Source}}</td>
         <td class="actions">
           {{if eq .Source "catalogue"}}
@@ -55,7 +63,7 @@
         </td>
       </tr>
     {{else}}
-      <tr><td colspan="4" class="muted center">Aucun modele configure.</td></tr>
+      <tr><td colspan="5" class="muted center">Aucun modele configure.</td></tr>
     {{end}}
     </tbody>
   </table>

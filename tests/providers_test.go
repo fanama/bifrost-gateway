@@ -105,11 +105,11 @@ func TestModelCatalogUseCaseDedupesAndRejectsInvalid(t *testing.T) {
 	uc := application.NewModelCatalogUseCase(newCatalogStore(t, nil))
 	ctx := context.Background()
 
-	_, err := uc.Create(ctx, " qwen3:8b ", "ollama")
+	_, err := uc.Create(ctx, " qwen3:8b ", "ollama", domain.ModelKindChat)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	_, err = uc.Create(ctx, "qwen3:8b", "OLLAMA") // doublon (provider case-insensible)
+	_, err = uc.Create(ctx, "qwen3:8b", "OLLAMA", domain.ModelKindChat) // doublon (provider case-insensible)
 	if err != nil {
 		t.Fatalf("duplicate should be silently deduped: %v", err)
 	}
@@ -118,12 +118,35 @@ func TestModelCatalogUseCaseDedupesAndRejectsInvalid(t *testing.T) {
 		t.Fatalf("expected dedupe to 1 model, got %d", len(list))
 	}
 
-	_, err = uc.Create(ctx, "", "ollama")
+	// Un premier ajout mal type se corrige en reajoutant le meme modele sous
+	// le bon kind : pas de suppression manuelle, pas de doublon.
+	upgraded, err := uc.Create(ctx, "qwen3:8b", "ollama", domain.ModelKindEmbedding)
+	if err != nil {
+		t.Fatalf("recreate with embedding kind: %v", err)
+	}
+	if upgraded.Kind != domain.ModelKindEmbedding {
+		t.Fatalf("expected kind upgrade to embedding, got %q", upgraded.Kind)
+	}
+	list, _ = uc.List(ctx)
+	if len(list) != 1 {
+		t.Fatalf("kind upgrade must not duplicate, got %d models", len(list))
+	}
+
+	// Un kind inconnu est refuse a la validation, pas stocke tel quel.
+	_, err = uc.Create(ctx, "bge", "ollama", "vecteur")
 	var verr *domain.ValidationError
+	if !errors.As(err, &verr) {
+		t.Fatalf("expected ValidationError for unknown kind, got %v", err)
+	}
+	if verr.Fields[0] != "kind" {
+		t.Fatalf("expected kind field, got %v", verr.Fields)
+	}
+
+	_, err = uc.Create(ctx, "", "ollama", domain.ModelKindChat)
 	if !errors.As(err, &verr) {
 		t.Fatalf("expected ValidationError for empty name, got %v", err)
 	}
-	_, err = uc.Create(ctx, "x", "   ")
+	_, err = uc.Create(ctx, "x", "   ", domain.ModelKindChat)
 	if !errors.As(err, &verr) {
 		t.Fatalf("expected ValidationError for empty provider, got %v", err)
 	}

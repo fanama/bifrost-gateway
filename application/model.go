@@ -48,6 +48,7 @@ func (u *ModelUseCase) List(ctx context.Context) ([]domain.ModelInfo, error) {
 			ID:       m.ID,
 			Name:     m.Name,
 			Provider: m.Provider,
+			Kind:     m.Kind,
 			Source:   "catalogue",
 		})
 	}

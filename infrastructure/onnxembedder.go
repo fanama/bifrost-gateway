@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -22,6 +23,11 @@ const (
 	// onnxDefaultMaxSeqLen est la longueur fixe de sequence : padding et
 	// troncature a cette taille, le masque d'attention ecarte le remplissage.
 	onnxDefaultMaxSeqLen = 128
+	// OnnxModelsDir est la racine des modeles ONNX locaux : chaque
+	// repertoire contenant model.onnx et vocab.txt y devient un modele
+	// selectable sous l'id "onnx/<repertoire>". Constante exportee pour que
+	// le decouverture (main) et l'embedder parlent du meme chemin.
+	OnnxModelsDir = "models/onnx"
 )
 
 // OnnxEmbedderOptions localise les trois artefacts du runtime ONNX local.
@@ -30,17 +36,22 @@ const (
 // non plus installe sur le systeme.
 type OnnxEmbedderOptions struct {
 	LibraryPath string // libonnxruntime.{dylib,so,dll}
-	ModelPath   string // fichier .onnx
-	VocabPath   string // vocab.txt WordPiece
-	MaxSeqLen   int
+	ModelPath   string // fichier .onnx du modele par defaut
+	VocabPath   string // vocab.txt WordPiece du modele par defaut
+	// ModelsDir est la racine des modeles discovers (repertoires
+	// <id>/model.onnx + vocab.txt). Surchargable pour les tests, qui
+	// s'executent avec un CWD different de la racine du module.
+	ModelsDir string
+	MaxSeqLen int
 }
 
 // DefaultOnnxEmbedderOptions resout la configuration depuis l'environnement.
 func DefaultOnnxEmbedderOptions() OnnxEmbedderOptions {
 	return OnnxEmbedderOptions{
 		LibraryPath: envOrDefault("ONNX_RUNTIME_LIB", defaultOnnxLibraryPath()),
-		ModelPath:   envOrDefault("ONNX_MODEL_PATH", "models/onnx/model.onnx"),
-		VocabPath:   envOrDefault("ONNX_VOCAB_PATH", "models/onnx/vocab.txt"),
+		ModelPath:   envOrDefault("ONNX_MODEL_PATH", filepath.Join(OnnxModelsDir, "model.onnx")),
+		VocabPath:   envOrDefault("ONNX_VOCAB_PATH", filepath.Join(OnnxModelsDir, "vocab.txt")),
+		ModelsDir:   OnnxModelsDir,
 		MaxSeqLen:   envIntOrDefault("ONNX_MAX_SEQ_LEN", onnxDefaultMaxSeqLen),
 	}
 }
@@ -48,11 +59,11 @@ func DefaultOnnxEmbedderOptions() OnnxEmbedderOptions {
 func defaultOnnxLibraryPath() string {
 	switch runtime.GOOS {
 	case "windows":
-		return "models/onnx/lib/onnxruntime.dll"
+		return filepath.Join(OnnxModelsDir, "lib", "onnxruntime.dll")
 	case "linux":
-		return "models/onnx/lib/libonnxruntime.so"
+		return filepath.Join(OnnxModelsDir, "lib", "libonnxruntime.so")
 	default:
-		return "models/onnx/lib/libonnxruntime.dylib"
+		return filepath.Join(OnnxModelsDir, "lib", "libonnxruntime.dylib")
 	}
 }
 
@@ -81,18 +92,27 @@ func envIntOrDefault(key string, fallback int) int {
 // environnement sans librairie ni modele recoit une erreur explicite plutot
 // qu'un echec silencieux.
 //
-// Le chargement est paresseux : il n'a lieu qu'au premier appel, et il est
-// serialise par un mutex partage avec l'inference, ce qui evite de payer le
-// cout d'un modele au demarrage du serveur quand rien ne l'appelle.
+// Le chargement est paresseux : chaque modele n'est charge qu'a son premier
+// appel, et tout est serialise par un mutex partage avec l'inference, ce qui
+// evite de payer le cout d'un modele au demarrage du serveur quand rien ne
+// l'appelle. Les modeles cohabitent ensuite en memoire, chacun avec sa
+// session et son tokenizer propres.
 type OnnxEmbedder struct {
 	opts OnnxEmbedderOptions
 
-	mu      sync.Mutex
-	runtime *onnxruntime.Runtime
-	env     *onnxruntime.Env
+	mu       sync.Mutex
+	runtime  *onnxruntime.Runtime
+	env      *onnxruntime.Env
+	sessions map[string]*onnxModelState // etat charge, par identifiant de modele
+}
+
+// onnxModelState regroupe la session et le tokenizer d'un modele charge. La
+// forme de sortie (dims) y est decouverte a la premiere inference : deux
+// modeles du repertoire peuvent produire des dimensions differentes.
+type onnxModelState struct {
 	session *onnxruntime.Session
 	tok     *wordPieceTokenizer
-	dims    int // decouverts a la premiere inference (forme de sortie)
+	dims    int
 }
 
 var _ domain.EmbeddingProvider = (*OnnxEmbedder)(nil)
@@ -111,13 +131,18 @@ func NewOnnxEmbedder(opts OnnxEmbedderOptions) *OnnxEmbedder {
 	if opts.VocabPath == "" {
 		opts.VocabPath = def.VocabPath
 	}
+	if opts.ModelsDir == "" {
+		opts.ModelsDir = def.ModelsDir
+	}
 	if opts.MaxSeqLen <= 0 {
 		opts.MaxSeqLen = def.MaxSeqLen
 	}
 	return &OnnxEmbedder{opts: opts}
 }
 
-// Embed encode un ou plusieurs textes avec le modele ONNX charge.
+// Embed encode un ou plusieurs textes avec le modele ONNX designe par la
+// requete (par defaut le modele curate onnx/all-MiniLM-L6-v2) : chaque
+// identifiant resout vers ses propres artefacts et sa propre session.
 func (e *OnnxEmbedder) Embed(ctx context.Context, cfg *domain.ChatConfig, req *domain.EmbeddingRequest) (*domain.EmbeddingResponse, error) {
 	if req == nil {
 		return nil, &domain.InvalidRequestError{Param: "input", Reason: "input is required"}
@@ -142,10 +167,11 @@ func (e *OnnxEmbedder) Embed(ctx context.Context, cfg *domain.ChatConfig, req *d
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	if err := e.loadLocked(); err != nil {
+	state, err := e.stateLocked(model)
+	if err != nil {
 		return nil, err
 	}
-	vectors, err := e.runLocked(ctx, texts)
+	vectors, err := e.runLocked(ctx, texts, state)
 	if err != nil {
 		return nil, err
 	}
@@ -186,73 +212,124 @@ func (e *OnnxEmbedder) Embed(ctx context.Context, cfg *domain.ChatConfig, req *d
 	}, nil
 }
 
-// loadLocked initialise la bibliotheque, la session et le tokenizer au premier
-// appel. Chaque manque est signale par un InvalidRequestError portant sur le
-// parametre "model" : le testeur l'affiche en toast, l'API le rend en 400 —
-// dans les deux cas le client voit exactement quel fichier manque plutot
-// qu'une erreur d'infrence obscure.
-func (e *OnnxEmbedder) loadLocked() error {
-	if e.session != nil {
-		return nil
+// pathsFor resout l'identifiant d'un modele vers ses deux artefacts. Le
+// modele par defaut conserve les chemins plats resolus depuis
+// l'environnement (ONNX_MODEL_PATH / ONNX_VOCAB_PATH) ; tout autre
+// identifiant designe un repertoire de OnnxModelsDir, convention qui rend les
+// modeles locaux decouvrables sans configuration.
+func (e *OnnxEmbedder) pathsFor(modelID string) (modelPath, vocabPath string, err error) {
+	id := strings.TrimSpace(modelID)
+	if id == "" {
+		id = domain.ModelOnnxMiniLM
+	}
+	if id == domain.ModelOnnxMiniLM {
+		return e.opts.ModelPath, e.opts.VocabPath, nil
+	}
+	rel := strings.TrimPrefix(id, domain.OnnxModelPrefix)
+	// Un identifiant ne designe qu'un repertoire direct : ni sous-chemin, ni
+	// remontee d'arborescence — l'id vient d'une requete client.
+	if rel == "" || rel == "." || rel == ".." ||
+		strings.Contains(rel, "..") || strings.ContainsAny(rel, `/\`) {
+		return "", "", &domain.InvalidRequestError{
+			Param:  "model",
+			Reason: fmt.Sprintf("onnx model id invalid: %q (expected %s<repertoire> under %s/)", id, domain.OnnxModelPrefix, e.opts.ModelsDir),
+		}
+	}
+	base := filepath.Join(e.opts.ModelsDir, rel)
+	return filepath.Join(base, "model.onnx"), filepath.Join(base, "vocab.txt"), nil
+}
+
+// stateLocked retourne l'etat charge du modele, cree au premier appel. La
+// bibliotheque et l'environnement ONNX sont partages par tous les modeles :
+// seule la session et le tokenizer sont propres a chacun. Chaque manque est
+// signale par un InvalidRequestError portant sur le parametre "model" : le
+// testeur l'affiche en toast, l'API le rend en 400 — dans les deux cas le
+// client voit exactement quel fichier manque plutot qu'une erreur d'infrence
+// obscure.
+func (e *OnnxEmbedder) stateLocked(modelID string) (*onnxModelState, error) {
+	key := strings.TrimSpace(modelID)
+	if key == "" {
+		key = domain.ModelOnnxMiniLM
+	}
+	if state, ok := e.sessions[key]; ok {
+		return state, nil
 	}
 
+	// L'identifiant est valide avant toute lecture disque : un id invalide
+	// est reconnu memes sans bibliotheque ni modele installes.
+	modelPath, vocabPath, err := e.pathsFor(key)
+	if err != nil {
+		return nil, err
+	}
+
+	if e.runtime == nil {
+		if _, err := os.Stat(e.opts.LibraryPath); err != nil {
+			return nil, &domain.InvalidRequestError{
+				Param: "model",
+				Reason: fmt.Sprintf(
+					"onnx runtime not configured: onnx runtime library not found at %q (set ONNX_RUNTIME_LIB)",
+					e.opts.LibraryPath,
+				),
+			}
+		}
+		rt, err := onnxruntime.NewRuntime(e.opts.LibraryPath, onnxAPIVersion)
+		if err != nil {
+			return nil, &domain.InvalidRequestError{Param: "model", Reason: "onnx runtime load failed: " + err.Error()}
+		}
+		env, err := rt.NewEnv("embedding", onnxruntime.LoggingLevelWarning)
+		if err != nil {
+			rt.Close()
+			return nil, &domain.InvalidRequestError{Param: "model", Reason: "onnx env init failed: " + err.Error()}
+		}
+		e.runtime = rt
+		e.env = env
+	}
+
+	hint := "set ONNX_MODEL_PATH / ONNX_VOCAB_PATH"
+	if key != domain.ModelOnnxMiniLM {
+		hint = fmt.Sprintf("a local model needs %s/<repertoire>/{model.onnx,vocab.txt}", e.opts.ModelsDir)
+	}
 	for _, missing := range []struct {
 		label string
 		path  string
 	}{
-		{"onnx runtime library", e.opts.LibraryPath},
-		{"onnx model", e.opts.ModelPath},
-		{"onnx vocab", e.opts.VocabPath},
+		{"onnx model", modelPath},
+		{"onnx vocab", vocabPath},
 	} {
 		if _, err := os.Stat(missing.path); err != nil {
-			return &domain.InvalidRequestError{
-				Param: "model",
-				Reason: fmt.Sprintf(
-					"onnx runtime not configured: %s not found at %q (set ONNX_RUNTIME_LIB / ONNX_MODEL_PATH / ONNX_VOCAB_PATH)",
-					missing.label, missing.path,
-				),
+			return nil, &domain.InvalidRequestError{
+				Param:  "model",
+				Reason: fmt.Sprintf("onnx model not configured: %s not found at %q (%s)", missing.label, missing.path, hint),
 			}
 		}
 	}
 
-	rt, err := onnxruntime.NewRuntime(e.opts.LibraryPath, onnxAPIVersion)
-	if err != nil {
-		return &domain.InvalidRequestError{Param: "model", Reason: "onnx runtime load failed: " + err.Error()}
-	}
-	env, err := rt.NewEnv("embedding", onnxruntime.LoggingLevelWarning)
-	if err != nil {
-		rt.Close()
-		return &domain.InvalidRequestError{Param: "model", Reason: "onnx env init failed: " + err.Error()}
-	}
 	// CPUExecutionProvider est le provider par defaut : nommer explicitement
 	// le CPU echoue sur certains builds d'ONNX Runtime ("Unknown provider
 	// name"), on laisse donc la liste vide pour obtenir le defaut.
-	session, err := rt.NewSession(env, e.opts.ModelPath, &onnxruntime.SessionOptions{})
+	session, err := e.runtime.NewSession(e.env, modelPath, &onnxruntime.SessionOptions{})
 	if err != nil {
-		env.Close()
-		rt.Close()
-		return &domain.InvalidRequestError{Param: "model", Reason: "onnx session init failed: " + err.Error()}
+		return nil, &domain.InvalidRequestError{Param: "model", Reason: "onnx session init failed: " + err.Error()}
 	}
-	tok, err := newWordPieceTokenizer(e.opts.VocabPath, e.opts.MaxSeqLen)
+	tok, err := newWordPieceTokenizer(vocabPath, e.opts.MaxSeqLen)
 	if err != nil {
 		session.Close()
-		env.Close()
-		rt.Close()
-		return &domain.InvalidRequestError{Param: "model", Reason: "onnx tokenizer init failed: " + err.Error()}
+		return nil, &domain.InvalidRequestError{Param: "model", Reason: "onnx tokenizer init failed: " + err.Error()}
 	}
 
-	e.runtime = rt
-	e.env = env
-	e.session = session
-	e.tok = tok
-	return nil
+	state := &onnxModelState{session: session, tok: tok}
+	if e.sessions == nil {
+		e.sessions = make(map[string]*onnxModelState, 2)
+	}
+	e.sessions[key] = state
+	return state, nil
 }
 
-// runLocked tokenise le lot, execute le modele et pool les sorties en un
-// vecteur L2-normalise par texte.
-func (e *OnnxEmbedder) runLocked(ctx context.Context, texts []string) ([][]float32, error) {
+// runLocked tokenise le lot, execute le modele designe par state et pool les
+// sorties en un vecteur L2-normalise par texte.
+func (e *OnnxEmbedder) runLocked(ctx context.Context, texts []string, state *onnxModelState) ([][]float32, error) {
 	batch := len(texts)
-	seq := e.tok.maxSeqLen
+	seq := state.tok.maxSeqLen
 
 	ids := make([]int64, batch*seq)
 	mask := make([]int64, batch*seq)
@@ -261,7 +338,7 @@ func (e *OnnxEmbedder) runLocked(ctx context.Context, texts []string) ([][]float
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		tIDs, tMask, tTypes := e.tok.encode(text)
+		tIDs, tMask, tTypes := state.tok.encode(text)
 		copy(ids[i*seq:], tIDs)
 		copy(mask[i*seq:], tMask)
 		copy(types[i*seq:], tTypes)
@@ -270,7 +347,7 @@ func (e *OnnxEmbedder) runLocked(ctx context.Context, texts []string) ([][]float
 	// Seuls les inputs reels du modele sont fournis : passer token_type_ids
 	// a un modele qui ne les declare pas fait echouer toute l'inference.
 	available := make(map[string]bool, 3)
-	for _, name := range e.session.InputNames() {
+	for _, name := range state.session.InputNames() {
 		available[name] = true
 	}
 	if !available["input_ids"] {
@@ -301,7 +378,7 @@ func (e *OnnxEmbedder) runLocked(ctx context.Context, texts []string) ([][]float
 	}
 	defer closeInputs()
 
-	outputs, err := e.session.Run(ctx, inputs)
+	outputs, err := state.session.Run(ctx, inputs)
 	if err != nil {
 		return nil, fmt.Errorf("onnx inference: %w", err)
 	}
@@ -313,7 +390,7 @@ func (e *OnnxEmbedder) runLocked(ctx context.Context, texts []string) ([][]float
 		}
 	}()
 
-	value, name, err := pickEmbeddingOutput(e.session, outputs)
+	value, name, err := pickEmbeddingOutput(state.session, outputs)
 	if err != nil {
 		return nil, err
 	}
@@ -329,8 +406,8 @@ func (e *OnnxEmbedder) runLocked(ctx context.Context, texts []string) ([][]float
 	for _, vec := range vectors {
 		l2Normalize(vec)
 	}
-	if e.dims == 0 && len(vectors) > 0 {
-		e.dims = len(vectors[0])
+	if state.dims == 0 && len(vectors) > 0 {
+		state.dims = len(vectors[0])
 	}
 	return vectors, nil
 }

@@ -311,8 +311,8 @@ deux different.
 
 ### 1c. Modeles d'embedding locaux
 
-Le testeur d'embeddings (`/embeddings-test`) et l'API `/v1/embeddings` exposent trois modeles curates, choisis par le
-champ `model` de la requete (jamais par la configuration du projet) :
+Le testeur d'embeddings (`/embeddings-test`) et l'API `/v1/embeddings` choisissent leur moteur d'apres le champ
+`model` de la requete (jamais par la configuration du projet). Trois modeles sont curates d'entree :
 
 | `model` | Moteur | Dimensions | Pre-requis |
 |---|---|---|---|
@@ -334,6 +334,26 @@ Chemins surchargeables : `ONNX_RUNTIME_LIB`, `ONNX_MODEL_PATH`, `ONNX_VOCAB_PATH
 Sans artefacts, le choix ONNX rend une erreur explicite citant le fichier manquant (400 sur l'API, toast sur le
 testeur) — jamais de repli silencieux vers un provider distant. `go test ./...` saute le test d'integration ONNX
 tant que les artefacts sont absents.
+
+**Ajouter des modeles depuis l'UI.** La page `Modeles` propose un champ **Type** (`chat` par defaut,
+`embedding`) : un modele declare `embedding` rejoint le select du testeur et l'API `/v1/embeddings` — le routeur
+le resout vers son moteur d'apres le provider enregistre (recommande : `local`, `onnx` ou `ollama`). Un modele de
+chat, meme homonyme, ne detourne jamais un appel d'embedding.
+
+**Plusieurs modeles ONNX locaux.** Chaque repertoire de `models/onnx/` contenant `model.onnx` + `vocab.txt`
+devient un modele selectable sous l'id `onnx/<repertoire>` : decouvert automatiquement au demarrage, seme au
+catalogue (type `embedding`), donc visible sur la page `Modeles`, dans le testeur et depuis l'API :
+
+```bash
+mkdir -p models/onnx/paraphrase-MiniLM-L3-v2
+# vocab.txt : memes vocabulaires BERT pour les MiniLM, copie du modele par defaut si absent
+curl -L -o models/onnx/paraphrase-MiniLM-L3-v2/model.onnx https://huggingface.co/Xenova/paraphrase-MiniLM-L3-v2/resolve/main/onnx/model_quantized.onnx
+```
+
+Le modele par defaut (`onnx/all-MiniLM-L6-v2`) reste sur les chemins plats ci-dessus (variables
+`ONNX_MODEL_PATH` / `ONNX_VOCAB_PATH`) ; la convention par repertoire ne vaut que pour les autres modeles. Un
+identifiant inconnu rend une erreur citant le repertoire attendu, et chaque modele charge a sa session en memoire
+(paresseusement, a son premier appel).
 
 ---
 
