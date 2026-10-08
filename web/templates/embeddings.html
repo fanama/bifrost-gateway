@@ -6,7 +6,7 @@
   <div class="page-head">
     <div>
       <h1>Testeur d'Embeddings</h1>
-      <p class="muted">Générez des vecteurs d'embedding et évaluez la similarité sémantique via l'API OpenAI /v1/embeddings.</p>
+      <p class="muted">Générez des vecteurs avec le modèle local embarqué <strong>{{.DefaultModel}}</strong> (runtime Go intégré, aucun appel distant) et évaluez la similarité cosinus.</p>
     </div>
   </div>
 
@@ -16,15 +16,10 @@
     <form hx-post="/embeddings-test/compute" hx-target="#embed-result" hx-indicator="#embed-loading" id="embed-form">
       <div class="grid2" style="margin-bottom:14px">
         <div>
-          <label>Configuration / Modèle
-            <select name="config_id" id="embed-config-select" onchange="updateCurlSnippet()">
-              {{range .Configs}}
-              <option value="{{.ID}}" data-model="{{.Model}}" {{if .Active}}selected{{end}}>
-                {{.Name}} ({{.Provider}} / {{.Model}}){{if .Active}} — Active{{end}}
-              </option>
-              {{end}}
-            </select>
-          </label>
+          <label>Modèle utilisé</label>
+          <div class="badge ok" id="embed-model-badge" style="display:inline-flex;align-items:center;gap:6px;padding:9px 14px;font-size:0.9rem">
+            {{.DefaultModel}} — runtime local embarqué
+          </div>
         </div>
         <div>
           <label>Dimensions souhaitées (optionnel)
@@ -114,9 +109,9 @@ function toggleEmbedMode(mode) {
 }
 
 function updateCurlSnippet() {
-  var select = document.getElementById('embed-config-select');
-  var opt = select ? (select.selectedOptions ? select.selectedOptions[0] : select.options[select.selectedIndex]) : null;
-  var model = opt ? (opt.dataset.model || 'text-embedding-3-small') : 'text-embedding-3-small';
+  // Le testeur sert le runtime local : l'exemple cURL nomme toujours le
+  // modele embarque, ce qui route l'API /v1/embeddings vers le local.
+  var model = '{{.DefaultModel}}';
   var isCompare = document.querySelector('input[name="mode"][value="compare"]').checked;
   var payload;
 

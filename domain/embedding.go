@@ -5,6 +5,15 @@ import (
 	"encoding/json"
 )
 
+// Noms partages du runtime d'embedding embarque. Une configuration dont le
+// provider vaut ProviderLocal, ou une requete dont le modele vaut
+// ModelLocalEmbedding, designe le runtime local : l'UI, le routage et
+// l'infra s'alignent sur ces deux constantes pour ne jamais diverger.
+const (
+	ProviderLocal       = "local"
+	ModelLocalEmbedding = "local-embedding"
+)
+
 type EmbeddingRequest struct {
 	Input          json.RawMessage `json:"input"`
 	Model          string          `json:"model,omitempty"`

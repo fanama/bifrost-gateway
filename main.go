@@ -163,7 +163,26 @@ func main() {
 	catalogUseCase := application.NewModelCatalogUseCase(catalogStore)
 	modelsHandler := handlers.NewModelsHandler(authUseCase, modelUseCase)
 
-	embeddingUseCase := application.NewEmbeddingUseCase(configStore, bifrostProvider)
+	// Le runtime d'embedding local est embarque dans le binaire (Go pur, sans
+	// CGO ni serveur compagnon). Les seeds ne courent que sur une base vide :
+	// on garantit donc ici la presence du provider "local" et du modele
+	// embarque, quel que soit l'etat de la base, pour que le formulaire de
+	// configuration (select provider + select modele) les proposent. Les deux
+	// operations sont idempotentes.
+	if err := ensureLocalProvider(ctx, providerUseCase); err != nil {
+		log.Printf("Failed to ensure local provider: %v", err)
+	}
+	if _, err := catalogUseCase.Create(ctx, infrastructure.LocalEmbeddingModel, infrastructure.LocalProviderName); err != nil {
+		log.Printf("Failed to ensure local embedding model: %v", err)
+	}
+
+	// Routage des embeddings : une configuration dont le provider vaut
+	// "local" est servee par le runtime embarque ; tout le reste continue de
+	// passer par Bifrost. L'echec du local est remonte tel quel, sans bascule
+	// silencieuse vers un provider distant.
+	localEmbedder := infrastructure.NewLocalEmbedder(infrastructure.LocalEmbedderOptions{})
+	embeddingProvider := infrastructure.NewEmbeddingRouter(localEmbedder, bifrostProvider)
+	embeddingUseCase := application.NewEmbeddingUseCase(configStore, embeddingProvider)
 	embeddingHandler := handlers.NewEmbeddingHandler(authUseCase, embeddingUseCase, application.NewConfigUseCase(configStore))
 
 	mux := http.NewServeMux()
@@ -251,6 +270,24 @@ func ollamaBaseURL() string {
 		return "http://localhost:11434"
 	}
 	return strings.TrimRight(base, "/")
+}
+
+// ensureLocalProvider cree le provider "local" s'il est absent. Le seed des
+// providers ne court que sur une base vide : une base existante ne le verrait
+// jamais apparaitre, et le select provider du formulaire de configuration ne
+// proposerait pas le runtime embarque. Cette garantie couvre les deux cas.
+func ensureLocalProvider(ctx context.Context, uc *application.ProviderUseCase) error {
+	list, err := uc.List(ctx)
+	if err != nil {
+		return err
+	}
+	for i := range list {
+		if strings.EqualFold(list[i].Name, infrastructure.LocalProviderName) {
+			return nil
+		}
+	}
+	_, err = uc.Create(ctx, infrastructure.LocalProviderName, "", "")
+	return err
 }
 
 // defaultProviders sont les fournisseurs prevus par defaut (seed du premier

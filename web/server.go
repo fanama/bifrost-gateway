@@ -362,27 +362,10 @@ func cosineSimilarity(a, b []float32) float64 {
 	return dot / (math.Sqrt(normA) * math.Sqrt(normB))
 }
 
+// pageEmbeddings rend le testeur. La page est la vitrine du runtime local :
+// elle n'expose plus le choix de configuration, et l'exemple cURL nomme le
+// modele embarque pour que l'API equivalente route aussi vers le local.
 func (s *Server) pageEmbeddings(w http.ResponseWriter, r *http.Request) {
-	configs, err := s.configs.List(r.Context())
-	if err != nil {
-		s.renderToast(w, "#embed-error", err.Error())
-		return
-	}
-
-	defaultModel := ""
-	for i := range configs {
-		if configs[i].Active {
-			defaultModel = configs[i].Model
-			break
-		}
-	}
-	if defaultModel == "" && len(configs) > 0 {
-		defaultModel = configs[0].Model
-	}
-	if defaultModel == "" {
-		defaultModel = "text-embedding-3-small"
-	}
-
 	baseURL := chatAPIBaseURL(r)
 	if baseURL == "" {
 		baseURL = "http://localhost:8080"
@@ -390,14 +373,13 @@ func (s *Server) pageEmbeddings(w http.ResponseWriter, r *http.Request) {
 	curlSnippet := fmt.Sprintf(`curl %s/v1/embeddings \
   -H "Authorization: Bearer <VOTRE_CLE_API>" \
   -H "Content-Type: application/json" \
-  -d '{"model":"%s","input":"Le chat dort paisiblement sur le canapé."}'`, baseURL, defaultModel)
+  -d '{"model":"%s","input":"Le chat dort paisiblement sur le canapé."}'`, baseURL, domain.ModelLocalEmbedding)
 
 	s.render(w, "page_embeddings", map[string]any{
 		"Active":       "embeddings",
 		"Title":        "Embeddings",
-		"Configs":      configs,
 		"BaseURL":      baseURL,
-		"DefaultModel": defaultModel,
+		"DefaultModel": domain.ModelLocalEmbedding,
 		"CurlSnippet":  curlSnippet,
 	})
 }
@@ -408,7 +390,6 @@ func (s *Server) computeEmbeddings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cfgID := strings.TrimSpace(r.FormValue("config_id"))
 	mode := strings.TrimSpace(r.FormValue("mode"))
 	var dims *int
 	if dStr := strings.TrimSpace(r.FormValue("dimensions")); dStr != "" {
@@ -452,8 +433,19 @@ func (s *Server) computeEmbeddings(w http.ResponseWriter, r *http.Request) {
 		Dimensions: dims,
 	}
 
+	// Le testeur appelle exclusivement le runtime embarque : la page est la
+	// vitrine du modele local et doit le rester quelle que soit la
+	// configuration selectionnee ailleurs (ici, config_id est ignore).
+	// L'echec local remonte tel quel, sans repli silencieux vers un provider
+	// distant.
+	localCfg := &domain.ChatConfig{
+		Name:     "Runtime local",
+		Provider: domain.ProviderLocal,
+		Model:    domain.ModelLocalEmbedding,
+	}
+
 	start := time.Now()
-	resp, _, err := s.embeddings.EmbedByConfigID(r.Context(), cfgID, req)
+	resp, err := s.embeddings.EmbedWithConfig(r.Context(), localCfg, req)
 	if err != nil {
 		s.renderToast(w, "#embed-error", err.Error())
 		return
@@ -493,7 +485,7 @@ func (s *Server) computeEmbeddings(w http.ResponseWriter, r *http.Request) {
 		var bars []EmbedSampleBar
 		for _, v := range item.Embedding[:sampleCount] {
 			abs := float32(math.Abs(float64(v)))
-			h := int((abs / maxVal) * 90) + 10
+			h := int((abs/maxVal)*90) + 10
 			if h > 100 {
 				h = 100
 			}
