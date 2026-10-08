@@ -4,7 +4,10 @@ go 1.26.0
 
 require (
 	github.com/maximhq/bifrost/core v1.4.4
+	github.com/shota3506/onnxruntime-purego v0.0.0-20260315223538-8db8bd7424b2
+	golang.org/x/text v0.33.0
 	gopkg.in/yaml.v3 v3.0.1
+	modernc.org/sqlite v1.60.1
 )
 
 require (
@@ -41,6 +44,7 @@ require (
 	github.com/bytedance/sonic/loader v0.5.0 // indirect
 	github.com/cloudwego/base64x v0.1.6 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
+	github.com/ebitengine/purego v0.9.0 // indirect
 	github.com/golang-jwt/jwt/v5 v5.3.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/invopop/jsonschema v0.13.0 // indirect
@@ -67,9 +71,7 @@ require (
 	golang.org/x/net v0.49.0 // indirect
 	golang.org/x/oauth2 v0.35.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
-	golang.org/x/text v0.33.0 // indirect
 	modernc.org/libc v1.77.1 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
-	modernc.org/sqlite v1.60.1 // indirect
 )

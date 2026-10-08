@@ -230,11 +230,15 @@ type countingEmbedder struct {
 	model string
 	err   error
 	resp  *domain.EmbeddingResponse
+	// cfg conserve la configuration effective recue, pour verifier les
+	// substitutions de provider faites par le routeur.
+	cfg *domain.ChatConfig
 }
 
 func (c *countingEmbedder) Embed(_ context.Context, cfg *domain.ChatConfig, _ *domain.EmbeddingRequest) (*domain.EmbeddingResponse, error) {
 	c.calls++
 	c.model = cfg.Model
+	c.cfg = cfg
 	if c.err != nil {
 		return nil, c.err
 	}
@@ -247,7 +251,7 @@ func (c *countingEmbedder) Embed(_ context.Context, cfg *domain.ChatConfig, _ *d
 func TestEmbeddingRouterDispatchesByProvider(t *testing.T) {
 	local := &countingEmbedder{}
 	inner := &countingEmbedder{}
-	router := NewEmbeddingRouter(local, inner)
+	router := NewEmbeddingRouter(local, nil, inner)
 
 	if _, err := router.Embed(context.Background(), &domain.ChatConfig{Provider: "LOCAL", Model: "m"}, &domain.EmbeddingRequest{Input: embedJSON(t, "x")}); err != nil {
 		t.Fatalf("local route: %v", err)
@@ -269,7 +273,7 @@ func TestEmbeddingRouterDispatchesByProvider(t *testing.T) {
 func TestEmbeddingRouterPropagatesLocalError(t *testing.T) {
 	local := &countingEmbedder{err: errors.New("modele local indisponible")}
 	inner := &countingEmbedder{}
-	router := NewEmbeddingRouter(local, inner)
+	router := NewEmbeddingRouter(local, nil, inner)
 
 	_, err := router.Embed(context.Background(), &domain.ChatConfig{Provider: "local"}, &domain.EmbeddingRequest{Input: embedJSON(t, "x")})
 	if err == nil || err.Error() != "modele local indisponible" {
@@ -281,7 +285,7 @@ func TestEmbeddingRouterPropagatesLocalError(t *testing.T) {
 }
 
 func TestEmbeddingRouterRejectsNilConfig(t *testing.T) {
-	router := NewEmbeddingRouter(&countingEmbedder{}, &countingEmbedder{})
+	router := NewEmbeddingRouter(&countingEmbedder{}, nil, &countingEmbedder{})
 	if _, err := router.Embed(context.Background(), nil, &domain.EmbeddingRequest{Input: embedJSON(t, "x")}); !errors.Is(err, domain.ErrNoActiveConfig) {
 		t.Fatalf("expected ErrNoActiveConfig, got %v", err)
 	}
@@ -293,7 +297,7 @@ func TestEmbeddingRouterRejectsNilConfig(t *testing.T) {
 func TestEmbeddingRouterRoutesOnModelName(t *testing.T) {
 	local := &countingEmbedder{}
 	inner := &countingEmbedder{}
-	router := NewEmbeddingRouter(local, inner)
+	router := NewEmbeddingRouter(local, nil, inner)
 
 	req := &domain.EmbeddingRequest{Input: embedJSON(t, "x"), Model: LocalEmbeddingModel}
 	if _, err := router.Embed(context.Background(), &domain.ChatConfig{Provider: "mistral", Model: "mistral-embed"}, req); err != nil {
@@ -301,5 +305,102 @@ func TestEmbeddingRouterRoutesOnModelName(t *testing.T) {
 	}
 	if local.calls != 1 || inner.calls != 0 {
 		t.Fatalf("expected local by model name, got local=%d inner=%d", local.calls, inner.calls)
+	}
+}
+
+// Un modele curaté distant (nomic-embed-text) route vers Bifrost avec un
+// provider substitue : URL et cle de la config active sont effacees pour que
+// le provider enregistre (ollama) soit utilise, jamais ceux d'une config
+// mistral activee sur le meme projet.
+func TestEmbeddingRouterChoiceSubstitutesProviderAndClearsCredentials(t *testing.T) {
+	local := &countingEmbedder{}
+	onnx := &countingEmbedder{}
+	inner := &countingEmbedder{}
+	router := NewEmbeddingRouter(local, onnx, inner)
+
+	cfg := &domain.ChatConfig{
+		Provider: "mistral",
+		Model:    "mistral-small",
+		BaseURL:  "https://api.mistral.ai",
+		APIKey:   "cle-secrete",
+	}
+	req := &domain.EmbeddingRequest{Input: embedJSON(t, "x"), Model: "nomic-embed-text"}
+	if _, err := router.Embed(context.Background(), cfg, req); err != nil {
+		t.Fatalf("choice route: %v", err)
+	}
+	if inner.calls != 1 || local.calls != 0 || onnx.calls != 0 {
+		t.Fatalf("expected inner only, got local=%d onnx=%d inner=%d", local.calls, onnx.calls, inner.calls)
+	}
+	eff := inner.cfg
+	if eff.Provider != "ollama" || eff.Model != "nomic-embed-text" {
+		t.Errorf("expected ollama/nomic-embed-text, got %s/%s", eff.Provider, eff.Model)
+	}
+	if eff.BaseURL != "" || eff.APIKey != "" {
+		t.Errorf("credentials/base URL must be cleared, got BaseURL=%q APIKey=%q", eff.BaseURL, eff.APIKey)
+	}
+	if eff.ProjectID != cfg.ProjectID {
+		t.Errorf("project must be preserved: %q", eff.ProjectID)
+	}
+}
+
+// Le modele ONNX curaté route vers le moteur ONNX, jamais vers Bifrost.
+func TestEmbeddingRouterRoutesOnnxChoice(t *testing.T) {
+	local := &countingEmbedder{}
+	onnx := &countingEmbedder{}
+	inner := &countingEmbedder{}
+	router := NewEmbeddingRouter(local, onnx, inner)
+
+	req := &domain.EmbeddingRequest{Input: embedJSON(t, "x"), Model: domain.ModelOnnxMiniLM}
+	if _, err := router.Embed(context.Background(), &domain.ChatConfig{Provider: "mistral"}, req); err != nil {
+		t.Fatalf("onnx route: %v", err)
+	}
+	if onnx.calls != 1 || local.calls != 0 || inner.calls != 0 {
+		t.Fatalf("expected onnx only, got local=%d onnx=%d inner=%d", local.calls, onnx.calls, inner.calls)
+	}
+}
+
+// Une configuration au provider onnx sert aussi le moteur ONNX, par
+// symetrie avec le provider local.
+func TestEmbeddingRouterRoutesOnnxByConfigProvider(t *testing.T) {
+	onnx := &countingEmbedder{}
+	inner := &countingEmbedder{}
+	router := NewEmbeddingRouter(&countingEmbedder{}, onnx, inner)
+
+	if _, err := router.Embed(context.Background(), &domain.ChatConfig{Provider: "ONNX"}, &domain.EmbeddingRequest{Input: embedJSON(t, "x")}); err != nil {
+		t.Fatalf("onnx provider route: %v", err)
+	}
+	if onnx.calls != 1 || inner.calls != 0 {
+		t.Fatalf("expected onnx by provider, got onnx=%d inner=%d", onnx.calls, inner.calls)
+	}
+}
+
+// Sans moteur ONNX configure, la demande ONNX echoue explicitement plutot
+// que de partir vers un provider distant.
+func TestEmbeddingRouterOnnxChoiceWithoutEngine(t *testing.T) {
+	router := NewEmbeddingRouter(&countingEmbedder{}, nil, &countingEmbedder{})
+	req := &domain.EmbeddingRequest{Input: embedJSON(t, "x"), Model: domain.ModelOnnxMiniLM}
+	_, err := router.Embed(context.Background(), &domain.ChatConfig{Provider: "mistral"}, req)
+	var invalid *domain.InvalidRequestError
+	if !errors.As(err, &invalid) || invalid.Param != "model" {
+		t.Fatalf("expected InvalidRequestError on model, got %v", err)
+	}
+}
+
+// Un modele explicitement inconnu retombe sur la configuration, inchangee :
+// c'est au provider distant de juger le modele, pas au routeur de deviner.
+func TestEmbeddingRouterUnknownModelFallsBackToConfig(t *testing.T) {
+	inner := &countingEmbedder{}
+	router := NewEmbeddingRouter(&countingEmbedder{}, &countingEmbedder{}, inner)
+
+	cfg := &domain.ChatConfig{Provider: "openai", Model: "text-embedding-3-small", APIKey: "k"}
+	req := &domain.EmbeddingRequest{Input: embedJSON(t, "x"), Model: "modele-inconnu"}
+	if _, err := router.Embed(context.Background(), cfg, req); err != nil {
+		t.Fatalf("unknown model route: %v", err)
+	}
+	if inner.calls != 1 {
+		t.Fatalf("expected inner, got %d calls", inner.calls)
+	}
+	if inner.cfg.Provider != "openai" || inner.cfg.APIKey != "k" {
+		t.Errorf("config must pass through unchanged, got %+v", inner.cfg)
 	}
 }

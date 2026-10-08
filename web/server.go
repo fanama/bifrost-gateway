@@ -362,9 +362,10 @@ func cosineSimilarity(a, b []float32) float64 {
 	return dot / (math.Sqrt(normA) * math.Sqrt(normB))
 }
 
-// pageEmbeddings rend le testeur. La page est la vitrine du runtime local :
-// elle n'expose plus le choix de configuration, et l'exemple cURL nomme le
-// modele embarque pour que l'API equivalente route aussi vers le local.
+// pageEmbeddings rend le testeur. La page expose la liste curatee des
+// modeles d'embedding (domain.EmbeddingChoices) : c'est le moteur selectionne
+// ici qui compte, jamais la configuration du projet. L'exemple cURL part du
+// modele par defaut et suit la selection via updateCurlSnippet.
 func (s *Server) pageEmbeddings(w http.ResponseWriter, r *http.Request) {
 	baseURL := chatAPIBaseURL(r)
 	if baseURL == "" {
@@ -380,6 +381,7 @@ func (s *Server) pageEmbeddings(w http.ResponseWriter, r *http.Request) {
 		"Title":        "Embeddings",
 		"BaseURL":      baseURL,
 		"DefaultModel": domain.ModelLocalEmbedding,
+		"EmbedChoices": domain.EmbeddingChoices,
 		"CurlSnippet":  curlSnippet,
 	})
 }
@@ -387,6 +389,16 @@ func (s *Server) pageEmbeddings(w http.ResponseWriter, r *http.Request) {
 func (s *Server) computeEmbeddings(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		s.renderToast(w, "#embed-error", "requête invalide")
+		return
+	}
+
+	modelID := strings.TrimSpace(r.FormValue("embed_model"))
+	if modelID == "" {
+		modelID = domain.ModelLocalEmbedding
+	}
+	choice := domain.FindEmbeddingChoice(modelID)
+	if choice == nil {
+		s.renderToast(w, "#embed-error", "modèle d'embedding inconnu : "+modelID)
 		return
 	}
 
@@ -433,19 +445,18 @@ func (s *Server) computeEmbeddings(w http.ResponseWriter, r *http.Request) {
 		Dimensions: dims,
 	}
 
-	// Le testeur appelle exclusivement le runtime embarque : la page est la
-	// vitrine du modele local et doit le rester quelle que soit la
-	// configuration selectionnee ailleurs (ici, config_id est ignore).
-	// L'echec local remonte tel quel, sans repli silencieux vers un provider
-	// distant.
-	localCfg := &domain.ChatConfig{
-		Name:     "Runtime local",
-		Provider: domain.ProviderLocal,
-		Model:    domain.ModelLocalEmbedding,
+	// Le testeur ne choisit que dans la liste curatee : la configuration du
+	// projet est ignoree, le moteur derive du modele selectionne (local, ONNX,
+	// Ollama). Un echec de moteur remonte tel quel, sans repli silencieux
+	// vers un autre provider.
+	selectedCfg := &domain.ChatConfig{
+		Name:     "Testeur d'embeddings",
+		Provider: choice.Provider,
+		Model:    choice.Model,
 	}
 
 	start := time.Now()
-	resp, err := s.embeddings.EmbedWithConfig(r.Context(), localCfg, req)
+	resp, err := s.embeddings.EmbedWithConfig(r.Context(), selectedCfg, req)
 	if err != nil {
 		s.renderToast(w, "#embed-error", err.Error())
 		return

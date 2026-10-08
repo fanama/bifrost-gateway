@@ -309,6 +309,34 @@ deux different.
 
 ---
 
+### 1c. Modeles d'embedding locaux
+
+Le testeur d'embeddings (`/embeddings-test`) et l'API `/v1/embeddings` exposent trois modeles curates, choisis par le
+champ `model` de la requete (jamais par la configuration du projet) :
+
+| `model` | Moteur | Dimensions | Pre-requis |
+|---|---|---|---|
+| `local-embedding` | Vectoriseur Go embarque dans le binaire | 384 | aucun |
+| `nomic-embed-text` | Ollama (`localhost:11434`) via Bifrost | 768 | `ollama pull nomic-embed-text` |
+| `onnx/all-MiniLM-L6-v2` | Runtime ONNX in-process (purego, sans CGO) | 384 | artefacts sous `models/onnx/` (ci-dessous) |
+
+`models/onnx/` est ignore par git : recupere les artefacts une fois (adapter l'archive ONNX Runtime a la plateforme :
+`osx-arm64`, `linux-x64`, `win-x64` ; la bibliotheque doit etre en **1.23.x**, l'API C attendue est la version 23) :
+
+```bash
+mkdir -p models/onnx/lib
+# libonnxruntime.{dylib,so,dll} depuis les releases microsoft/onnxruntime (v1.23.0), placee dans models/onnx/lib/
+curl -L -o models/onnx/model.onnx https://huggingface.co/Xenova/all-MiniLM-L6-v2/resolve/main/onnx/model_quantized.onnx
+curl -L -o models/onnx/vocab.txt  https://huggingface.co/Xenova/all-MiniLM-L6-v2/resolve/main/vocab.txt
+```
+
+Chemins surchargeables : `ONNX_RUNTIME_LIB`, `ONNX_MODEL_PATH`, `ONNX_VOCAB_PATH`, `ONNX_MAX_SEQ_LEN` (defaut 128).
+Sans artefacts, le choix ONNX rend une erreur explicite citant le fichier manquant (400 sur l'API, toast sur le
+testeur) — jamais de repli silencieux vers un provider distant. `go test ./...` saute le test d'integration ONNX
+tant que les artefacts sont absents.
+
+---
+
 ## Exemple d'Utilisation
 
 ### Requete sur la passerelle (Port `4000`)

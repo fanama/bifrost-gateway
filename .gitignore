@@ -11,6 +11,9 @@ certs/
 # ---- Dynamic runtime state (never commit) ----
 data/
 
+# ---- Local ML assets (binaires volumineux recuperes separement) ----
+models/
+
 # ---- Transient ----
 *.tmp
 

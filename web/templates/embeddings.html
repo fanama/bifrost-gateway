@@ -6,7 +6,7 @@
   <div class="page-head">
     <div>
       <h1>Testeur d'Embeddings</h1>
-      <p class="muted">Générez des vecteurs avec le modèle local embarqué <strong>{{.DefaultModel}}</strong> (runtime Go intégré, aucun appel distant) et évaluez la similarité cosinus.</p>
+      <p class="muted">Générez des vecteurs avec un des modèles d'embedding du projet — runtime Go embarqué, ONNX ou Ollama, aucun appel distant — et évaluez la similarité cosinus.</p>
     </div>
   </div>
 
@@ -16,10 +16,14 @@
     <form hx-post="/embeddings-test/compute" hx-target="#embed-result" hx-indicator="#embed-loading" id="embed-form">
       <div class="grid2" style="margin-bottom:14px">
         <div>
-          <label>Modèle utilisé</label>
-          <div class="badge ok" id="embed-model-badge" style="display:inline-flex;align-items:center;gap:6px;padding:9px 14px;font-size:0.9rem">
-            {{.DefaultModel}} — runtime local embarqué
-          </div>
+          <label>Modèle d'embedding
+            <select name="embed_model" id="embed-model-select" onchange="updateCurlSnippet()">
+              {{range .EmbedChoices}}
+              <option value="{{.Model}}" data-hint="{{.Hint}}" {{if eq .Model $.DefaultModel}}selected{{end}}>{{.Label}}</option>
+              {{end}}
+            </select>
+          </label>
+          <div class="muted" id="embed-model-hint" style="font-size:0.78rem;margin-top:5px;line-height:1.45">{{range .EmbedChoices}}{{if eq .Model $.DefaultModel}}{{.Hint}}{{end}}{{end}}</div>
         </div>
         <div>
           <label>Dimensions souhaitées (optionnel)
@@ -109,9 +113,13 @@ function toggleEmbedMode(mode) {
 }
 
 function updateCurlSnippet() {
-  // Le testeur sert le runtime local : l'exemple cURL nomme toujours le
-  // modele embarque, ce qui route l'API /v1/embeddings vers le local.
-  var model = '{{.DefaultModel}}';
+  // L'exemple cURL suit la selection : chaque modele curaté sait vers quel
+  // moteur il route, l'API /v1/embeddings applique la meme regle.
+  var select = document.getElementById('embed-model-select');
+  var model = (select && select.value) ? select.value : '{{.DefaultModel}}';
+  var opt = select && select.selectedOptions ? select.selectedOptions[0] : null;
+  var hint = document.getElementById('embed-model-hint');
+  if (hint && opt && opt.dataset.hint) hint.textContent = opt.dataset.hint;
   var isCompare = document.querySelector('input[name="mode"][value="compare"]').checked;
   var payload;
 

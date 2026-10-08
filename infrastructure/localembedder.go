@@ -76,12 +76,9 @@ func (e *LocalEmbedder) Embed(ctx context.Context, cfg *domain.ChatConfig, req *
 	if err != nil {
 		return nil, err
 	}
-	encoding := "float"
-	if req.EncodingFormat != nil && strings.TrimSpace(*req.EncodingFormat) != "" {
-		encoding = strings.ToLower(strings.TrimSpace(*req.EncodingFormat))
-		if encoding != "float" && encoding != "base64" {
-			return nil, &domain.InvalidRequestError{Param: "encoding_format", Reason: "only float and base64 are supported by the local runtime"}
-		}
+	encoding, err := resolveEncodingFormat(req)
+	if err != nil {
+		return nil, err
 	}
 
 	model := LocalEmbeddingModel
@@ -102,13 +99,7 @@ func (e *LocalEmbedder) Embed(ctx context.Context, cfg *domain.ChatConfig, req *
 		}
 		vec := embedText(text, dims)
 		tokens += localTokenCount(text)
-		data[i] = domain.EmbeddingItem{Index: i, Object: "embedding"}
-		if encoding == "base64" {
-			encoded := encodeFloat32Base64(vec)
-			data[i].EmbeddingStr = &encoded
-		} else {
-			data[i].Embedding = vec
-		}
+		data[i] = newEmbeddingItem(i, vec, encoding)
 	}
 
 	return &domain.EmbeddingResponse{
@@ -138,6 +129,32 @@ func (e *LocalEmbedder) dimensions(req *domain.EmbeddingRequest) (int, error) {
 		}
 	}
 	return d, nil
+}
+
+// resolveEncodingFormat valide encoding_format et rend "float" ou "base64".
+// Partage par les moteurs local et ONNX pour que l'API expose les memes
+// formats quel que soit le runtime qui repond.
+func resolveEncodingFormat(req *domain.EmbeddingRequest) (string, error) {
+	if req.EncodingFormat == nil || strings.TrimSpace(*req.EncodingFormat) == "" {
+		return "float", nil
+	}
+	encoding := strings.ToLower(strings.TrimSpace(*req.EncodingFormat))
+	if encoding != "float" && encoding != "base64" {
+		return "", &domain.InvalidRequestError{Param: "encoding_format", Reason: "only float and base64 are supported"}
+	}
+	return encoding, nil
+}
+
+// newEmbeddingItem construit un item de reponse dans le format demande.
+func newEmbeddingItem(index int, vec []float32, encoding string) domain.EmbeddingItem {
+	item := domain.EmbeddingItem{Index: index, Object: "embedding"}
+	if encoding == "base64" {
+		encoded := encodeFloat32Base64(vec)
+		item.EmbeddingStr = &encoded
+		return item
+	}
+	item.Embedding = vec
+	return item
 }
 
 // parseEmbeddingTexts decode la forme OpenAI de "input" : une chaine ou un

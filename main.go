@@ -176,12 +176,15 @@ func main() {
 		log.Printf("Failed to ensure local embedding model: %v", err)
 	}
 
-	// Routage des embeddings : une configuration dont le provider vaut
-	// "local" est servee par le runtime embarque ; tout le reste continue de
-	// passer par Bifrost. L'echec du local est remonte tel quel, sans bascule
+	// Routage des embeddings sur trois moteurs : le runtime Go embarque, le
+	// runtime ONNX in-process (artefacts sous models/onnx/, chargement
+	// paresseux au premier appel), et Bifrost en repli pour tout le reste.
+	// Le choix se fait par le modele demande (liste curatee) ou le provider
+	// de la configuration ; un echec local est remonte tel quel, sans bascule
 	// silencieuse vers un provider distant.
 	localEmbedder := infrastructure.NewLocalEmbedder(infrastructure.LocalEmbedderOptions{})
-	embeddingProvider := infrastructure.NewEmbeddingRouter(localEmbedder, bifrostProvider)
+	onnxEmbedder := infrastructure.NewOnnxEmbedder(infrastructure.DefaultOnnxEmbedderOptions())
+	embeddingProvider := infrastructure.NewEmbeddingRouter(localEmbedder, onnxEmbedder, bifrostProvider)
 	embeddingUseCase := application.NewEmbeddingUseCase(configStore, embeddingProvider)
 	embeddingHandler := handlers.NewEmbeddingHandler(authUseCase, embeddingUseCase, application.NewConfigUseCase(configStore))
 

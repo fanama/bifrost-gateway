@@ -65,6 +65,7 @@ func TestEmbeddingUILocalRuntime(t *testing.T) {
 	embeddingUC := application.NewEmbeddingUseCase(configStore,
 		infrastructure.NewEmbeddingRouter(
 			infrastructure.NewLocalEmbedder(infrastructure.LocalEmbedderOptions{}),
+			nil,
 			spy,
 		),
 	)
@@ -86,6 +87,15 @@ func TestEmbeddingUILocalRuntime(t *testing.T) {
 	}
 	if !strings.Contains(bodyPage, infrastructure.LocalEmbeddingModel) || !strings.Contains(bodyPage, "runtime local") {
 		t.Fatalf("expected local runtime badge in page, got: %s", bodyPage)
+	}
+	// Le select propose les trois moteurs curates (local, Ollama, ONNX).
+	if !strings.Contains(bodyPage, `name="embed_model"`) {
+		t.Fatalf("expected embed_model select in page, got: %s", bodyPage)
+	}
+	for _, want := range []string{infrastructure.LocalEmbeddingModel, "nomic-embed-text", domain.ModelOnnxMiniLM} {
+		if !strings.Contains(bodyPage, want) {
+			t.Fatalf("expected choice %q in page, got: %s", want, bodyPage)
+		}
 	}
 
 	// 2. Le compute en mode texte unique passe par le runtime local, malgre
@@ -131,6 +141,25 @@ func TestEmbeddingUILocalRuntime(t *testing.T) {
 	}
 	if !strings.Contains(recCompare.Body.String(), "Score de similarité cosinus") {
 		t.Fatalf("expected similarity score, got: %s", recCompare.Body)
+	}
+	if spy.calls != 0 {
+		t.Errorf("remote embedder called %d times", spy.calls)
+	}
+
+	// Un modele hors liste curatee est refuse explicitement, pas servi par
+	// defaut par un moteur quelconque.
+	formUnknown := url.Values{
+		"embed_model": {"modele-fantome"},
+		"mode":        {"single"},
+		"input_text":  {"texte"},
+	}
+	reqUnknown := httptest.NewRequest("POST", "/embeddings-test/compute", strings.NewReader(formUnknown.Encode()))
+	reqUnknown.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	recUnknown := httptest.NewRecorder()
+	mux.ServeHTTP(recUnknown, reqUnknown)
+	// Le toast HTML-escape l'apostrophe (&#39;) : on asserte la forme rendue.
+	if !strings.Contains(recUnknown.Body.String(), "modèle d&#39;embedding inconnu") {
+		t.Fatalf("expected unknown-model toast, got: %s", recUnknown.Body)
 	}
 	if spy.calls != 0 {
 		t.Errorf("remote embedder called %d times", spy.calls)
