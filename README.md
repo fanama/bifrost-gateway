@@ -18,6 +18,7 @@
 * **Configurations Multi-Providers** : Enregistrement de plusieurs configurations LLM (provider, modele, base URL, cle API, system prompt, parametres de generation) persistees au format JSON.
 * **Gestion des providers & Cles d'API** : Liste des fournisseurs (nom, base URL par defaut, cle d'API par defaut avec support des variables d'environnement ex: `{env:API_KEY}`) gerable depuis l'UI (`/providers`). Autofill et fallback automatique de la cle API et de l'URL lors des configurations. Seed des defauts au premier demarrage (`data/providers.json`).
 * **Catalogue de modeles** : Ajout/retrait de modeles (nom + provider) depuis l'UI (`/models`), fusionnes deduques avec `config.yaml` et les modeles utilises dans les configurations. Seed depuis `config.yaml` au premier demarrage (`data/models.json`).
+* **Moteurs locaux ONNX** : embeddings **et chat** executes in-process (runtime charge en pure Go, sans CGO ni service compagnon). Artefacts sous `models/onnx/` ignores par git mais **telecharges au premier lancement** (`ONNX_AUTO_DOWNLOAD=0` pour desactiver), modeles discovers au demarrage et semes au catalogue.
 * **Projets multi-tenant** : Chaque configuration appartient a un projet ; les API keys sont creees par projet et authentifient les appels `/v1/chat/completions` (la configuration active du projet sert de modele/params). Une migration auto cree le projet par defaut `General`.
 * **Haute Performance** : Serveur HTTP Go natif avec gestion des timeouts et signaux de fermeture gracieuse.
 
@@ -320,8 +321,14 @@ Le testeur d'embeddings (`/embeddings-test`) et l'API `/v1/embeddings` choisisse
 | `nomic-embed-text` | Ollama (`localhost:11434`) via Bifrost | 768 | `ollama pull nomic-embed-text` |
 | `onnx/all-MiniLM-L6-v2` | Runtime ONNX in-process (purego, sans CGO) | 384 | artefacts sous `models/onnx/` (ci-dessous) |
 
-`models/onnx/` est ignore par git : recupere les artefacts une fois (adapter l'archive ONNX Runtime a la plateforme :
-`osx-arm64`, `linux-x64`, `win-x64` ; la bibliotheque doit etre en **1.23.x**, l'API C attendue est la version 23) :
+`models/onnx/` est ignore par git : **au premier lancement, les artefacts manquants sont telecharges
+automatiquement** (bibliotheque ONNX pour la plateforme, modeles d'embedding, modele de chat — environ 190 Mo,
+logues `[onnx] ...` puis en place de facon atomique). Un echec reseau n'empeche jamais le serveur de demarrer :
+il est journalise, le prochain demarrage reprend, et chaque choix ONNX reste une erreur explicite citant le fichier
+manquant. Desactiver avec `ONNX_AUTO_DOWNLOAD=0` (artefacts fournis a la main ou environnement hors-ligne).
+
+En pilotage manuel (meme sources que celles du manifeste), adapter l'archive ONNX Runtime a la plateforme
+(`osx-arm64`, `linux-x64`, `win-x64` ; la bibliotheque doit etre en **1.23.x**, l'API C attendue est la version 23) :
 
 ```bash
 mkdir -p models/onnx/lib
@@ -354,6 +361,27 @@ Le modele par defaut (`onnx/all-MiniLM-L6-v2`) reste sur les chemins plats ci-de
 `ONNX_MODEL_PATH` / `ONNX_VOCAB_PATH`) ; la convention par repertoire ne vaut que pour les autres modeles. Un
 identifiant inconnu rend une erreur citant le repertoire attendu, et chaque modele charge a sa session en memoire
 (paresseusement, a son premier appel).
+
+---
+
+### 1d. Modeles de chat ONNX locaux
+
+Un repertoire `models/onnx/chat/<id>/` contenant `model.onnx` + `tokenizer.json` + `config.json` devient un
+**mode de chat executable localement**, sous le provider `onnx` :
+
+* **Decouverte et catalogue** : les modeles trouves sont semes au catalogue (type `chat`, provider `onnx`) et
+  proposés sur la page `Modeles` ; creer une configuration avec provider `onnx` et ce modele suffit a router la
+  conversation localement (le routeur choisit le moteur avant Bifrost, sans bascule silencieuse).
+* **Moteur** : prefill puis decode avec cache KV, echantillonnage temperature / top_p (argmax si temperature a 0),
+  arret sur le `eos_token_id` de `generation_config.json` ; tokenizer BPE pur Go lu dans `tokenizer.json` (les deux
+  serialisations de merges sont acceptees). Streaming SSE natif, fragment par fragment.
+* **Template de chat** : applique automatiquement (system par defaut, cadre `role`), les identifiants de la
+  configuration active restent ignores — le modele est executé in-process, sans cle ni URL.
+* **Premier lancement** : l'ensemble (modele + runtime) fait partie du manifeste de telechargement automatique
+  de la section 1c (~190 Mo au total).
+
+Le modele de reference est `smollm2-135m-instruct` (135 M de parametres, ~131 Mo quantise). Fenetre et budget
+reglables par `ONNX_CHAT_MAX_SEQ_LEN` (defaut 2048) et `ONNX_CHAT_MAX_NEW_TOKENS` (defaut 256).
 
 ---
 
@@ -422,22 +450,49 @@ curl -X POST 'http://localhost:4000/v1/chat/completions' \
 
 | Methode | Chemin | Role |
 | --- | --- | --- |
-| `POST` | `/v1/chat/completions` | Completion de chat (auth `Bearer`) |
+| `POST` | `/v1/chat/completions` | Completion de chat, SSE si `stream: true` (auth `Bearer`) |
+| `POST` | `/v1/embeddings` | Vecteurs d'embedding (auth `Bearer`) |
 | `GET` | `/v1/models` | Liste des modeles connus |
 | `GET` | `/v1/models/{model}` | Detail d'un modele, insensible a la casse |
+| `GET` | `/health/liveness`, `/health/readiness`, `/health/test_connection` | Sondes JSON sans authentification |
 
-Les trois routes exigent une cle. Toute autre route `/v1/...` repond `404` avec
+Toute route `/v1/...` exige une cle. Toute autre route `/v1/` repond `404` avec
 l'enveloppe d'erreur OpenAI, et non le texte brut de `net/http` :
 
 ```bash
 curl http://localhost:4000/v1/models -H 'Authorization: Bearer sk-bridge-XXXX'
 # {"object":"list","data":[{"id":"gemma4:e4b","object":"model","created":1791195330,"owned_by":"ollama"}]}
 
+curl -X POST http://localhost:4000/v1/embeddings -H 'Authorization: Bearer sk-bridge-XXXX' \
+  -H 'Content-Type: application/json' -d '{"input":"bonjour","model":"onnx/all-MiniLM-L6-v2"}'
+# {"object":"list","data":[{"object":"embedding","index":0,"embedding":[...]}],"model":"onnx/all-MiniLM-L6-v2",...}
+
 curl -X POST http://localhost:4000/v1/embeddings -d '{}'
-# {"error":{"code":"invalid_url","message":"Invalid URL (POST /v1/embeddings)","param":null,"type":"invalid_request_error"}}
+# {"error":{"code":"invalid_api_key","message":"invalid or missing API key","param":null,"type":"authentication_error"}}
 ```
 
 Les erreurs suivent le paquet `error` d'OpenAI (`message`, `type`, `param`, `code`).
+
+### Documentation API (Swagger)
+
+La specification OpenAPI 3 est **embarquee dans le binaire** et servie en local :
+
+| Chemin | Contenu |
+| --- | --- |
+| `GET /swagger` | Interface Swagger UI ("Try it out" inclus) |
+| `GET /openapi.yaml` | Specification OpenAPI 3 (`application/yaml`) |
+
+```bash
+curl http://localhost:4000/openapi.yaml | head -3
+# openapi: 3.0.3
+# info:
+#   title: Bridge Gateway API
+```
+
+Les deux routes sont sans authentification : la documentation decrit l'API, elle ne
+l'expose pas — chaque route `/v1/` reste protegee par sa propre cle. L'UI Swagger
+charge ses assets depuis un CDN (`unpkg`) ; la specification, elle, est servie en
+local et reste utilisable hors-ligne (Redoc, generateur de SDK : `npx @openapitools/openapi-generator-cli generate -i http://localhost:4000/openapi.yaml -g go`).
 
 ### Streaming
 

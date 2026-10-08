@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"bridge-gateway/application"
+	"bridge-gateway/docs"
 	"bridge-gateway/domain"
 	"bridge-gateway/handlers"
 	"bridge-gateway/infrastructure"
@@ -38,6 +39,14 @@ func main() {
 	}
 
 	ctx := context.Background()
+
+	// Premier lancement : les artefacts ONNX (runtime, modeles d'embedding,
+	// modele de chat) sont ignores par git et telecharges une fois s'ils
+	// manquent. Un echec reseau n'est pas bloquant — le serveur demarre et les
+	// erreurs explicites existantes citent le fichier absent.
+	if err := infrastructure.EnsureOnnxAssets(ctx); err != nil {
+		log.Printf("ONNX assets incomplete (will retry on next start): %v", err)
+	}
 
 	db, err := infrastructure.OpenDB(*dbPath)
 	if err != nil {
@@ -233,6 +242,10 @@ func main() {
 	embeddingHandler := handlers.NewEmbeddingHandler(authUseCase, embeddingUseCase, application.NewConfigUseCase(configStore))
 
 	mux := http.NewServeMux()
+	// Documentation API : /swagger (Swagger UI) et /openapi.yaml (spec 3
+	// embarquee dans le binaire), sans authentification — elles decrivent
+	// l'API, elles ne l'exposent pas.
+	docs.Register(mux)
 	handlers.RegisterRoutes(mux, chatHandler, modelsHandler, embeddingHandler)
 	mux.HandleFunc("/chat/completions", chatHandler.HandleChatCompletion)
 	mux.HandleFunc("/embeddings", embeddingHandler.HandleEmbedding)

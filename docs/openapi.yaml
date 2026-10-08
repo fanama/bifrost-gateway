@@ -1,0 +1,432 @@
+openapi: 3.0.3
+info:
+  title: Bridge Gateway API
+  description: |
+    Passerelle compatible OpenAI : chat, embeddings et decouverte de modeles.
+
+    Trois moteurs cohabitent derriere les memes routes : Bifrost (providers
+    distants), le vectoriseur Go embarque et les modeles ONNX locaux
+    (provider `onnx`, artefacts sous `models/onnx/`, discovers et executes
+    in-process). Les erreurs suivent l'enveloppe `error` d'OpenAI
+    (`message`, `type`, `param`, `code`).
+
+    La meme specification est servie en local : `GET /openapi.yaml`.
+  version: 1.0.0
+servers:
+  - url: http://localhost:4000
+    description: Passerelle (port publie, docker compose)
+  - url: http://localhost:8080
+    description: Demarrage local (`make run`)
+tags:
+  - name: chat
+    description: Generation de texte (streaming SSE inclus)
+  - name: embeddings
+    description: Vecteurs d'embedding
+  - name: models
+    description: Decouverte des modeles
+  - name: health
+    description: Sondes de sante (sans authentification)
+security:
+  - bearerAuth: []
+paths:
+  /v1/chat/completions:
+    post:
+      tags: [chat]
+      summary: Genere une reponse de chat
+      description: |
+        Avec `"stream": false` (defaut) repond en JSON ; avec `"stream": true`
+        repond en SSE (`text/event-stream`) : trame de role, trames de deltas,
+        trame de fin `finish_reason: "stop"`, puis `data: [DONE]`.
+
+        La requete est enrigee (system prompt de la configuration active),
+        routee par tier puis executee par le provider actif — Bifrost, ou le
+        modele ONNX local quand la configuration designe le provider `onnx`.
+      operationId: createChatCompletion
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatCompletionRequest'
+      responses:
+        '200':
+          description: 'Completion, ou flux SSE quand stream vaut true'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatCompletionResponse'
+            text/event-stream:
+              schema:
+                type: string
+                description: |
+                  Blocs `data: <json>` (ChatCompletionResponse en fragments,
+                  `object: chat.completion.chunk`) separes par une ligne vide,
+                  termines par `data: [DONE]`.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /v1/embeddings:
+    post:
+      tags: [embeddings]
+      summary: Calcule des vecteurs d'embedding
+      description: |
+        Le moteur est choisi par le champ `model` de la requete : modele curate
+        (`local-embedding`, `nomic-embed-text`, `onnx/all-MiniLM-L6-v2`),
+        identifiant `onnx/<repertoire>`, modele du catalogue declare de type
+        embedding, sinon le provider de la configuration active.
+      operationId: createEmbedding
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmbeddingRequest'
+      responses:
+        '200':
+          description: Vecteurs calcules
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmbeddingResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /v1/models:
+    get:
+      tags: [models]
+      summary: Liste les modeles connus
+      operationId: listModels
+      responses:
+        '200':
+          description: Liste des modeles
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+  /v1/models/{model}:
+    get:
+      tags: [models]
+      summary: Detail d'un modele (insensible a la casse)
+      operationId: retrieveModel
+      parameters:
+        - name: model
+          in: path
+          required: true
+          description: Nom ou identifiant du modele.
+          schema:
+            type: string
+          example: onnx/all-MiniLM-L6-v2
+      responses:
+        '200':
+          description: Le modele demande
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Model'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+  /health/liveness:
+    get:
+      tags: [health]
+      security: []
+      summary: Sonde de vivacite (sans authentification)
+      operationId: liveness
+      responses:
+        '200':
+          $ref: '#/components/responses/HealthOK'
+  /health/readiness:
+    get:
+      tags: [health]
+      security: []
+      summary: Sonde de disponibilite (sans authentification)
+      operationId: readiness
+      responses:
+        '200':
+          $ref: '#/components/responses/HealthOK'
+  /health/test_connection:
+    get:
+      tags: [health]
+      security: []
+      summary: Test de connexion (sans authentification)
+      operationId: testConnection
+      responses:
+        '200':
+          $ref: '#/components/responses/HealthOK'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: |
+        Cle API au format `sk-bridge-...` (cle de projet ou cle maitresse),
+        transportee dans l'en-tete `Authorization: Bearer <cle>`.
+  responses:
+    HealthOK:
+      description: Sante en ordre
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [status]
+            properties:
+              status:
+                type: string
+                enum: [ok]
+    BadRequest:
+      description: Requete invalide (parametre manquant ou malforme)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: Cle absente ou invalide
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Ressource inconnue
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    MethodNotAllowed:
+      description: Methode non autorisee sur cette route
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    InternalServerError:
+      description: Echec interne ou du provider
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+  schemas:
+    ChatMessage:
+      type: object
+      required: [role, content]
+      properties:
+        role:
+          type: string
+          enum: [system, user, assistant, tool]
+        content:
+          type: string
+    ResponseFormat:
+      type: object
+      description: Sortie structuree, comme chez OpenAI.
+      properties:
+        type:
+          type: string
+          enum: [json_object, json_schema]
+        json_schema:
+          type: object
+          additionalProperties: true
+    ChatCompletionRequest:
+      type: object
+      required: [messages]
+      properties:
+        model:
+          type: string
+          description: |
+            Modele demande. La configuration active de la projet reste la
+            source par defaut ; le routeur peut substitue un tier superieur.
+          example: gemma4:e4b
+        messages:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/ChatMessage'
+        temperature:
+          type: number
+          minimum: 0
+          maximum: 2
+          default: 0.7
+        top_p:
+          type: number
+          minimum: 0
+          maximum: 1
+        max_tokens:
+          type: integer
+          minimum: 1
+        frequency_penalty:
+          type: number
+          minimum: -2
+          maximum: 2
+        presence_penalty:
+          type: number
+          minimum: -2
+          maximum: 2
+        stream:
+          type: boolean
+          default: false
+          description: Bascule la reponse en SSE sur la meme route.
+        stream_options:
+          type: object
+          properties:
+            include_usage:
+              type: boolean
+              description: Ajoute une trame de consommation avant `[DONE]`.
+        response_format:
+          $ref: '#/components/schemas/ResponseFormat'
+    ChatCompletionResponse:
+      type: object
+      required: [id, object, created, model, choices, usage]
+      properties:
+        id:
+          type: string
+          example: chatcmpl-8f3a1c2b4e5d6f7a8b9c0d1e
+        object:
+          type: string
+          enum: [chat.completion, chat.completion.chunk]
+        created:
+          type: integer
+          format: int64
+        model:
+          type: string
+          description: Modele qui a reellement produit la reponse (peut differe de la requete).
+        choices:
+          type: array
+          items:
+            type: object
+            properties:
+              index:
+                type: integer
+              message:
+                $ref: '#/components/schemas/ChatMessage'
+              finish_reason:
+                type: string
+                enum: [stop, length, content_filter, null]
+        usage:
+          $ref: '#/components/schemas/Usage'
+    Usage:
+      type: object
+      properties:
+        prompt_tokens:
+          type: integer
+        completion_tokens:
+          type: integer
+        total_tokens:
+          type: integer
+    EmbeddingRequest:
+      type: object
+      required: [input]
+      properties:
+        input:
+          description: Texte, liste de textes ou liste d'entiers (tokens).
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: string
+            - type: array
+              items:
+                type: integer
+        model:
+          type: string
+          description: Modele curate, `onnx/<repertoire>` ou modele du catalogue.
+          example: onnx/all-MiniLM-L6-v2
+        dimensions:
+          type: integer
+          description: Tronque puis renormalise (jamais etendu au-dela du modele).
+        encoding_format:
+          type: string
+          enum: [float, base64]
+    EmbeddingResponse:
+      type: object
+      required: [object, data, model, usage]
+      properties:
+        object:
+          type: string
+          enum: [list]
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/EmbeddingItem'
+        model:
+          type: string
+        usage:
+          type: object
+          properties:
+            prompt_tokens:
+              type: integer
+            total_tokens:
+              type: integer
+    EmbeddingItem:
+      type: object
+      required: [object, index, embedding]
+      properties:
+        object:
+          type: string
+          enum: [embedding]
+        index:
+          type: integer
+        embedding:
+          type: array
+          items:
+            type: number
+    Model:
+      type: object
+      required: [id, object, created, owned_by]
+      properties:
+        id:
+          type: string
+          example: onnx/all-MiniLM-L6-v2
+        object:
+          type: string
+          enum: [model]
+        created:
+          type: integer
+          format: int64
+        owned_by:
+          type: string
+          description: Provider d'origine (onnx, ollama, mistral...).
+          example: onnx
+    ModelList:
+      type: object
+      required: [object, data]
+      properties:
+        object:
+          type: string
+          enum: [list]
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Model'
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [message, type]
+          properties:
+            message:
+              type: string
+            type:
+              type: string
+              enum:
+                - invalid_request_error
+                - authentication_error
+                - not_found_error
+                - server_error
+            param:
+              type: string
+              nullable: true
+            code:
+              type: string
+              nullable: true

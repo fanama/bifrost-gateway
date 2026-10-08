@@ -26,13 +26,42 @@ type chatTokenizerJSON struct {
 	Model struct {
 		Type   string         `json:"type"`
 		Vocab  map[string]int `json:"vocab"`
-		Merges []string       `json:"merges"`
+		Merges []mergeEntry   `json:"merges"`
 	} `json:"model"`
 	AddedTokens []struct {
 		ID      int    `json:"id"`
 		Content string `json:"content"`
 		Special bool   `json:"special"`
 	} `json:"added_tokens"`
+}
+
+// mergeEntry accepte les deux serialisations de la bibliotheque tokenizers :
+// la chaine "gauche droite" (standard) et le tableau [gauche, droite] (certains
+// exports HuggingFace, comme onnx-community). Un format inconnu reste une
+// erreur de parsing explicite, jamais un merge ignore silencieusement.
+type mergeEntry struct {
+	left, right string
+}
+
+func (m *mergeEntry) UnmarshalJSON(raw []byte) error {
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		left, right, ok := strings.Cut(s, " ")
+		if !ok {
+			return fmt.Errorf("malformed merge %q", s)
+		}
+		m.left, m.right = left, right
+		return nil
+	}
+	var pair []string
+	if err := json.Unmarshal(raw, &pair); err != nil {
+		return fmt.Errorf("unsupported merge entry: %w", err)
+	}
+	if len(pair) != 2 {
+		return fmt.Errorf("unsupported merge entry %q: want [left, right]", raw)
+	}
+	m.left, m.right = pair[0], pair[1]
+	return nil
 }
 
 // newOnnxChatTokenizer charge et valide tokenizer.json. Seul le format BPE
@@ -58,11 +87,7 @@ func newOnnxChatTokenizer(path string) (*onnxChatTokenizer, error) {
 		ranks: make(map[string]int, len(doc.Model.Merges)),
 	}
 	for i, m := range doc.Model.Merges {
-		left, right, ok := strings.Cut(m, " ")
-		if !ok {
-			return nil, fmt.Errorf("onnx chat tokenizer: malformed merge %q", m)
-		}
-		t.ranks[left+"\x00"+right] = i
+		t.ranks[m.left+"\x00"+m.right] = i
 	}
 	for _, at := range doc.AddedTokens {
 		if at.Content == "" {

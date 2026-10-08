@@ -25,9 +25,9 @@ const defaultChatSystemPrompt = "<|im_start|>system\nYou are a helpful AI assist
 // OnnxChatOptions localise les artefacts du runtime de chat. Les champs vides
 // prennent les defauts ; ModelsDir est surchargeable pour les tests.
 type OnnxChatOptions struct {
-	LibraryPath string
-	ModelsDir   string
-	MaxSeqLen   int // fenetre de contexte cumulee (prompt + generation)
+	LibraryPath  string
+	ModelsDir    string
+	MaxSeqLen    int // fenetre de contexte cumulee (prompt + generation)
 	MaxNewTokens int // longueur de generation par defaut
 }
 
@@ -43,12 +43,12 @@ func DefaultOnnxChatOptions() OnnxChatOptions {
 // onnxChatModel est l'etat charge d'un modele de chat : session, tokenizer,
 // geometrie KV (tires de config.json) et jetons d'arret.
 type onnxChatModel struct {
-	session  *onnxruntime.Session
-	tok      *onnxChatTokenizer
-	kvHeads  int
-	headDim  int
-	layers   int
-	eos      map[int]bool
+	session *onnxruntime.Session
+	tok     *onnxChatTokenizer
+	kvHeads int
+	headDim int
+	layers  int
+	eos     map[int]bool
 }
 
 // onnxChatConfig reflete les champs de config.json necessaires au cache.
@@ -100,10 +100,10 @@ func ListOnnxChatModels(dir string) ([]string, error) {
 type OnnxChatProvider struct {
 	opts OnnxChatOptions
 
-	mu       sync.Mutex
-	runtime  *onnxruntime.Runtime
-	env      *onnxruntime.Env
-	models   map[string]*onnxChatModel
+	mu      sync.Mutex
+	runtime *onnxruntime.Runtime
+	env     *onnxruntime.Env
+	models  map[string]*onnxChatModel
 }
 
 // NewOnnxChatProvider complete les options vides avec les defauts.
@@ -226,7 +226,7 @@ func readOnnxChatModelMeta(base string, sess *onnxruntime.Session, tok *onnxChat
 // renderChatPrompt assemble le prompt selon le template de chat du modele
 // (SmolLM2, HuggingfaceJBaber) :
 //   - system par defaut si la conversation n'ouvre pas sur un system ;
-//   - chaque message est encadre par <|im_start|>role ...  
+//   - chaque message est encadre par <|im_start|>role ...
 //
 // Le marqueur final <|im_start|>assistant\n attend la reponse du modele.
 func renderChatPrompt(messages []domain.ChatMessage) string {
