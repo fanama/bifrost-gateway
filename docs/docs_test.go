@@ -91,6 +91,11 @@ func TestUIHandlerPage(t *testing.T) {
 	if !strings.Contains(body, "/openapi.yaml") || !strings.Contains(body, "swagger-ui-bundle") {
 		t.Error("page sans lien vers la spec ou sans Swagger UI")
 	}
+	// Try it out doit rappeler l'origine qui sert la page : la spec declare
+	// :4000 et :8080, dont une seule repond selon le mode de demarrage.
+	if !strings.Contains(body, "requestInterceptor") || !strings.Contains(body, "window.location.origin") {
+		t.Error("page sans requestInterceptor d'origine pour Try it out")
+	}
 }
 
 // TestRegister : les deux routes sont montees sur le mux de l'application.

@@ -494,6 +494,13 @@ l'expose pas — chaque route `/v1/` reste protegee par sa propre cle. L'UI Swag
 charge ses assets depuis un CDN (`unpkg`) ; la specification, elle, est servie en
 local et reste utilisable hors-ligne (Redoc, generateur de SDK : `npx @openapitools/openapi-generator-cli generate -i http://localhost:4000/openapi.yaml -g go`).
 
+Les requetes "Try it out" rappellent l'origine qui sert la page : la specification
+declare `:4000` (docker) et `:8080` (demarrage local), mais une seule — parfois
+aucune — repond selon le mode de demarrage. Parallelement, les routes `/v1/`,
+`/health/` et la documentation exposent les en-tetes CORS (preflight `OPTIONS`
+inclus) pour tout appel cross-origin de navigateur ; les routes de l'UI web,
+sans authentification, restent hors CORS.
+
 ### Streaming
 
 `"stream": true` bascule la meme route en SSE (`text/event-stream`), sans

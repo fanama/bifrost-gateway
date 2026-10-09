@@ -36,6 +36,12 @@ func SpecHandler() http.Handler {
 // swaggerUIPage est l'interface servie sur /swagger. Swagger UI est charge
 // depuis unpkg (CDN) : sans reseau, la page reste ouvrable mais vide — la
 // specification, elle, est servie en local sur /openapi.yaml.
+//
+// Le requestInterceptor rapatrie chaque "Try it out" sur l'origine qui sert
+// la page : la specification declare http://localhost:4000 (docker) et
+// http://localhost:8080 (demarrage local), dont une seule — parfois aucune —
+// repond selon le mode de demarrage. Appeler l'origine de la page, c'est
+// appeler la passerelle qui sert cette documentation, sans preflight CORS.
 const swaggerUIPage = `<!doctype html>
 <html lang="fr">
 <head>
@@ -55,7 +61,18 @@ SwaggerUIBundle({
   deepLinking: true,
   tryItOutEnabled: true,
   presets: [SwaggerUIBundle.presets.apis],
-  layout: "BaseLayout"
+  layout: "BaseLayout",
+  requestInterceptor: function (req) {
+    // Reecrit toute URL d'une autre origine vers celle de la page :
+    // spec fetch (relatif, deja bon) et requetes d'essai vers :4000/:8080.
+    try {
+      var target = new URL(req.url, window.location.origin);
+      if (target.origin !== window.location.origin) {
+        req.url = window.location.origin + target.pathname + target.search;
+      }
+    } catch (e) {}
+    return req;
+  }
 });
 </script>
 </body>

@@ -256,7 +256,10 @@ func main() {
 	ui := web.NewServer(chatUseCase, configUseCase, modelUseCase, projectUseCase, keyUseCase, providerUseCase, catalogUseCase, embeddingUseCase, ollamaBaseURL())
 	ui.Register(mux)
 
-	middleware := loggingMiddleware(mux)
+	// CORS enveloppe le routage (pas le logging, qui doit voir chaque
+	// requete, preflights compris) : le preflight OPTIONS doit etre repondu
+	// ici, avant que les handlers ne le rejettent en 405. Voir handlers.CORS.
+	middleware := loggingMiddleware(handlers.CORS(mux))
 
 	server := &http.Server{
 		Addr:         fmt.Sprintf(":%d", *port),
