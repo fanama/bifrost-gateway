@@ -9,7 +9,7 @@ import (
 //
 // Swagger UI peut etre servi depuis une origine differente de celle de
 // l'API : la specification declare a la fois http://localhost:4000 (docker)
-// et http://localhost:8080 (demarrage local), et la page ouverte sur l'une
+// et http://localhost:8080 (repli sans BRIDGE_PORT), et la page ouverte sur l'une
 // appelle l'autre. Sans ces en-tetes, le navigateur rejete le preflight
 // OPTIONS (rejete ici meme en 405) et lit impossible la reponse :
 // "Try it out" echoue avant meme d'atteindre le handler.

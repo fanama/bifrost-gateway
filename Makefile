@@ -11,8 +11,9 @@ build-linux:
 	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags="-s -w" -o bin/bridge-gateway-linux .
 	@cp /etc/ssl/cert.pem certs/ca-certificates.crt
 
+# run ecoute sur BRIDGE_PORT (.env, defaut 4000) ; "--port" force une valeur.
 run: build
-	./bin/bridge-gateway --config config.yaml --port 8080
+	./bin/bridge-gateway --config config.yaml
 
 test:
 	go test ./tests/ -v -count=1

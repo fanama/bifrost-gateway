@@ -25,13 +25,25 @@ const generalProjectID = "project-general"
 
 func main() {
 	configPath := flag.String("config", "config.yaml", "path to config file")
-	port := flag.Int("port", 8080, "server port")
+	port := flag.Int("port", 8080, "server port (a defaut : BRIDGE_PORT de .env, puis 8080)")
 	dbPath := flag.String("db", "data/bridge.db", "path to the SQLite database file")
 	legacyDir := flag.String("import-json", "data", "directory holding legacy JSON stores to migrate on first start (empty to skip)")
 	flag.Parse()
 
+	// Port d'ecoute : le drapeau --port explicite gagne (la CMD du conteneur
+	// porte "--port 8080" alors que le meme .env expose BRIDGE_PORT=4000 cote
+	// hotte), puis BRIDGE_PORT de l'environnement, puis BRIDGE_PORT du fichier
+	// .env — la source attendue d'un demarrage local — puis 8080 en repli.
+	portSet := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "port" {
+			portSet = true
+		}
+	})
+	listenPort := infrastructure.ResolvePort(*port, portSet, os.LookupEnv, os.ReadFile)
+
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
-	log.Printf("Starting Bridge Gateway (BifrostAI + HTMX UI) on port %d", *port)
+	log.Printf("Starting Bridge Gateway (BifrostAI + HTMX UI) on port %d", listenPort)
 
 	cfg, err := infrastructure.LoadConfig(*configPath)
 	if err != nil {
@@ -262,7 +274,7 @@ func main() {
 	middleware := loggingMiddleware(handlers.CORS(mux))
 
 	server := &http.Server{
-		Addr:         fmt.Sprintf(":%d", *port),
+		Addr:         fmt.Sprintf(":%d", listenPort),
 		Handler:      middleware,
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 120 * time.Second,
@@ -274,7 +286,7 @@ func main() {
 		log.Printf("  - %s", m.ModelName)
 	}
 
-	log.Printf("Server listening on :%d", *port)
+	log.Printf("Server listening on :%d", listenPort)
 
 	go func() {
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {

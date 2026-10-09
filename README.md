@@ -30,7 +30,7 @@
 flowchart TD
     subgraph GoApp [Bridge Gateway - Go]
         direction TB
-        HTTP[HTTP Server :8080] --> MW[Enrichment Middleware]
+        HTTP[HTTP Server :BRIDGE_PORT] --> MW[Enrichment Middleware]
         MW --> BifrostSDK[BifrostAI Go SDK]
     end
 
@@ -129,16 +129,16 @@ gteway-local/
 # Compiler
 make build
 
-# Executer (UI dispo sur http://localhost:8080)
+# Executer (port : BRIDGE_PORT du .env, defaut 4000 — UI sur http://localhost:4000)
 make run
 
-# Ou directement
-go run . --config config.yaml --port 8080
+# Ou directement (idem ; "--port" force une valeur differente)
+go run . --config config.yaml
 ```
 
 ### 1b. Interface Web (HTMX)
 
-L'application embarque une UI rendue cote serveur en HTMX (accessible a `http://localhost:8080`) :
+L'application embarque une UI rendue cote serveur en HTMX (accessible a `http://localhost:4000`, port `BRIDGE_PORT` du `.env`) :
 
 | Route | Methode | Fonction |
 |---|---|---|
@@ -217,6 +217,11 @@ BRIDGE_PORT=4000
 # BIFROST AI
 BIFROST_MASTER_KEY="cpZ75uPavZpwRLMjD0dj"
 ```
+
+`BRIDGE_PORT` determine le port publie (docker compose) **et** le port d'ecoute
+local : la passerelle lit `.env` au demarrage, sans export prealable. Un
+`--port` explicite reste prioritaire — c'est le cas dans le conteneur, qui
+ecoute en interne sur 8080 pendant que l'hote publie `BRIDGE_PORT`.
 
 ### 5. Persistance et cache
 
@@ -495,8 +500,9 @@ charge ses assets depuis un CDN (`unpkg`) ; la specification, elle, est servie e
 local et reste utilisable hors-ligne (Redoc, generateur de SDK : `npx @openapitools/openapi-generator-cli generate -i http://localhost:4000/openapi.yaml -g go`).
 
 Les requetes "Try it out" rappellent l'origine qui sert la page : la specification
-declare `:4000` (docker) et `:8080` (demarrage local), mais une seule — parfois
-aucune — repond selon le mode de demarrage. Parallelement, les routes `/v1/`,
+declare `:4000` (BRIDGE_PORT du `.env`, docker compose et `make run`) et `:8080`
+(repli sans `.env`), dont une seule — parfois aucune — repond selon le mode de
+demarrage. Parallelement, les routes `/v1/`,
 `/health/` et la documentation exposent les en-tetes CORS (preflight `OPTIONS`
 inclus) pour tout appel cross-origin de navigateur ; les routes de l'UI web,
 sans authentification, restent hors CORS.
@@ -642,7 +648,7 @@ d'une requete API.
 ### Health Check
 
 ```bash
-curl http://localhost:8080/health/liveness
+curl http://localhost:4000/health/liveness
 # {"status":"ok"}
 ```
 

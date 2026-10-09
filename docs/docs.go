@@ -39,7 +39,7 @@ func SpecHandler() http.Handler {
 //
 // Le requestInterceptor rapatrie chaque "Try it out" sur l'origine qui sert
 // la page : la specification declare http://localhost:4000 (docker) et
-// http://localhost:8080 (demarrage local), dont une seule — parfois aucune —
+// http://localhost:8080 (repli sans BRIDGE_PORT), dont une seule — parfois aucune —
 // repond selon le mode de demarrage. Appeler l'origine de la page, c'est
 // appeler la passerelle qui sert cette documentation, sans preflight CORS.
 const swaggerUIPage = `<!doctype html>

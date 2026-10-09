@@ -14,9 +14,9 @@ info:
   version: 1.0.0
 servers:
   - url: http://localhost:4000
-    description: Passerelle (port publie, docker compose)
+    description: Passerelle — BRIDGE_PORT du fichier .env (defaut 4000), docker compose et make run
   - url: http://localhost:8080
-    description: Demarrage local (`make run`)
+    description: Repli quand BRIDGE_PORT n'est pas renseigne (port par defaut de la passerelle)
 tags:
   - name: chat
     description: Generation de texte (streaming SSE inclus)
