@@ -9,22 +9,21 @@ import (
 	"strings"
 	"time"
 
-	"bridge-gateway/application"
 	"bridge-gateway/domain"
 )
 
 type ChatHandler struct {
-	enrichment *domain.EnrichmentService
-	auth       *application.AuthUseCase
-	chat       *application.ChatUseCase
-	configs    *application.ConfigUseCase
+	enrichment Enricher
+	auth       Authenticator
+	chat       ChatCompletion
+	configs    ActiveConfigLoader
 }
 
 func NewChatHandler(
-	enrichment *domain.EnrichmentService,
-	auth *application.AuthUseCase,
-	chat *application.ChatUseCase,
-	configs *application.ConfigUseCase,
+	enrichment Enricher,
+	auth Authenticator,
+	chat ChatCompletion,
+	configs ActiveConfigLoader,
 ) *ChatHandler {
 	return &ChatHandler{enrichment: enrichment, auth: auth, chat: chat, configs: configs}
 }

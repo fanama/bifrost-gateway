@@ -62,7 +62,7 @@ Chaque requete passe par les etapes suivantes avant d'atteindre le LLM :
 
 ```
 gteway-local/
-├── main.go                    # Point d'entree, serveur HTTP, wiring
+├── main.go                    # Point d'entree : composition root (wiring, seeds, serveur HTTP)
 ├── go.mod / go.sum            # Dependencies Go
 ├── config.yaml                # Configuration BifrostAI + modeles
 ├── compose.yml                # Docker Compose (passerelle autonome : SQLite + cache memoire)
@@ -70,54 +70,77 @@ gteway-local/
 ├── Makefile                   # Raccourcis build/run/test
 ├── data/                      # Base SQLite (bridge.db) + anciens stores JSON a migrer
 ├── domain/                    # Cœur metier (0 dependance framework)
-│   ├── models.go              # Metadata, TeamMetadata, RequestMetadata
-│   ├── chat.go                # ChatMessage, ChatRequest, EnrichedRequest
-│   ├── config.go              # ChatConfig (entite), ChatConfigRepository (interface)
-│   ├── project.go             # Project (entite) + ProjectRepository
-│   ├── apikey.go              # APIKey (entite, hash sha256) + APIKeyRepository
-│   ├── provider.go            # Provider (entite, baseURL + apiKey par defaut)
-│   ├── model.go               # ModelInfo (entite)
-│   ├── llm.go                 # LLMProvider (interface)
+│   ├── store.go               # CrudRepository[T] / UpdatableRepository[T] (ports generiques)
+│   ├── models.go, chat.go     # Metadata, ChatMessage, ChatRequest, EnrichedRequest
+│   ├── config.go              # ChatConfig (entite), ChatConfigRepository, tiers de routage
+│   ├── project.go, apikey.go  # Project, APIKey (empreinte sha256) + repositories
+│   ├── provider.go, model.go, modelcatalog.go  # Provider, ModelInfo, CatalogModel + ports
+│   ├── embedding.go           # EmbeddingRequest/Response + EmbeddingProvider (port)
+│   ├── llm.go                 # LLMProvider, StreamingLLMProvider, Classifier (ports)
+│   ├── cache.go               # Cache (port) + CacheKeyFactory
 │   ├── services.go            # EnrichmentService (pipeline d'enrichissement)
-│   ├── errors.go              # ValidationError, erreurs entites
-│   └── id.go                  # Generation d'identifiants (NewID)
-├── application/               # Cas d'usage (orchestration, depend des interfaces domain)
-│   ├── chat.go                # ChatUseCase (envoyer un message vers le LLM)
-│   ├── config.go              # ConfigUseCase (CRUD + activation, scope projet)
-│   ├── project.go             # ProjectUseCase (CRUD projets)
-│   ├── apikey.go              # APIKeyUseCase (creation/revocation, secret unique)
+│   ├── schema.go              # JSON Schema (validation, mode strict, constructeur)
+│   └── errors.go, id.go       # Erreurs metier, generation d'identifiants
+├── application/               # Cas d'usage (depend UNIQUEMENT de domain)
+│   ├── entity.go              # EntityUseCase generique (CRUD partage)
+│   ├── chat.go, embedding.go  # ChatUseCase (Send/Stream), EmbeddingUseCase
+│   ├── config.go, project.go, apikey.go, provider.go, modelcatalog.go
 │   ├── auth.go                # AuthUseCase (master key globale ou cle projet)
 │   └── model.go               # ModelUseCase (fusion modeles gateway + configurations)
-├── infrastructure/            # Adaptateurs techniques
-│   ├── bifrost.go             # Client BifrostAI (wrapper SDK)
-│   ├── account.go             # GatewayAccount (adapteur providers)
-│   ├── runtime.go             # BifrostLLMProvider (LLMProvider) + DynamicAccount par config
-│   ├── jsonio.go              # Helpers de persistance JSON (thread-safe)
-│   ├── config_store.go        # FileConfigStore (persistance JSON, thread-safe)
-│   ├── project_store.go       # FileProjectStore
-│   ├── apikey_store.go        # FileAPIKeyStore (digest uniquement)
-│   └── config.go              # Chargement config.yaml
-├── handlers/
-│   └── chat.go                # HTTP handlers (OpenAI-compatible API + auth cle)
-├── web/                       # Couche de delivery (HTMX)
-│   ├── server.go              # Serveur UI (routes, templates embarquees)
+├── infrastructure/            # Adaptateurs techniques (dependent UNIQUEMENT de domain)
+│   ├── sqlstore.go, sqlschema.go  # SQLite (modernc, sans CGO) + migrations
+│   ├── config_store.go, project_store.go, apikey_store.go,
+│   │   provider_store.go, modelcatalog_store.go  # Repositories SQLite
+│   ├── cachedstore.go, cachedllm.go, memorycache.go  # Decorateurs de cache (OCP)
+│   ├── bifrost.go, runtime.go, account.go  # Client BifrostAI + LLMProvider
+│   ├── chatrouter.go, routing.go, classifier.go, failover.go, cooldown.go  # Routage par tier
+│   ├── embeddingrouter.go, localembedder.go, onnxembedder.go  # 3 moteurs d'embedding
+│   ├── onnxchat*.go, onnxassets.go, onnxmodels.go, wordpiece.go  # Moteurs ONNX locaux (sans CGO)
+│   ├── jsonimport.go          # Migration des anciens stores JSON
+│   └── config.go, port.go     # Chargement config.yaml, resolution du port
+├── handlers/                  # API compatible OpenAI (delivery)
+│   ├── ports.go               # Interfaces de consommateur (DIP/ISP)
+│   ├── routes.go              # RegisterRoutes (partage production + tests de contrat)
+│   ├── chat.go, stream.go     # Completions (reponse JSON + SSE)
+│   └── models.go, embeddings.go, cors.go
+├── web/                       # Couche de delivery (HTMX), decoupee par domaine (SRP)
+│   ├── ports.go               # Interfaces de consommateur (DIP/ISP)
+│   ├── server.go              # Façade : uiShared (rendu), assemblage des sous-contrôleurs, routing
+│   ├── chat.go, projects.go   # Sous-contrôleurs : discussion, projets + configs + cles
+│   ├── models.go, providers.go, embeddings.go  # Sous-contrôleurs : catalogue, providers, testeur
+│   ├── forms.go               # Parsing des formulaires de configuration (parties pures)
 │   ├── static/htmx.min.js     # HTMX vendorise (embarque dans le binaire)
 │   └── templates/             # Partials + modeles (layout, chat, models, projects)
-├── tests/
-│   ├── services_test.go       # Tests du pipeline d'enrichissement
-│   ├── application_test.go    # Tests des cas d'usage (configs CRUD, chat, modeles)
-│   └── projects_test.go       # Tests projets, cles API, auth, active config par projet
-└── helm/
-    └── values-dev.yaml        # Valeurs Kubernetes pour dev
+├── docs/                      # Spec OpenAPI 3 embarquee + Swagger UI (/swagger)
+└── tests/                     # Tests de contrat et d'integration (couche complete)
+    ├── openai_contract_test.go  # Contrat OpenAI sur handlers.RegisterRoutes
+    ├── application_test.go    # Tests des cas d'usage (configs CRUD, chat, modeles)
+    └── projects_test.go       # Tests projets, cles API, auth, active config par projet
 ```
 
 ### Description des Couches
 
-* **`domain/` (Coeur Metier)** : Independant de tout framework et de toute infrastructure. Entites (`ChatConfig`, `ModelInfo`, `ChatMessage`), interfaces de sortie (`ChatConfigRepository`, `LLMProvider`) et regles metier (pipeline d'enrichissement).
-* **`application/` (Cas d'Usage)** : Orchestration des regles metier via les portes d'entree. Depend UNIQUEMENT des interfaces `domain` (inversion de dependance).
-* **`infrastructure/` (Adaptateurs)** : Implantations concrètes des interfaces `domain` : client BifrostAI, store JSON file-based, comptes providers dynamiques.
-* **`web/` (Delivery)** : Handlers HTTP + templates HTMX embarques (`go:embed`). Routing Go 1.22 (`GET /models`, `POST /configs/{id}`, etc.).
-* **`handlers/` (API)** : API compatible OpenAI (`/v1/chat/completions` y compris en SSE, `/v1/models`), health checks, gestion d'erreurs. Le routage `/v1` est centralise dans `handlers.RegisterRoutes`, partage entre `main.go` et les tests de contrat. Le streaming est dans `handlers/stream.go`, la reponse unique dans `chat.go`.
+* **`domain/` (Coeur Metier)** : Independant de tout framework et de toute infrastructure. Entites (`ChatConfig`, `ModelInfo`, `ChatMessage`), ports de sortie (`ChatConfigRepository`, `LLMProvider`, `EmbeddingProvider`, `Cache`) et regles metier (pipeline d'enrichissement, tiers de routage, validation des schemas).
+* **`application/` (Cas d'Usage)** : Orchestration des regles metier via les portes d'entree. Depend UNIQUEMENT des interfaces `domain` (inversion de dependance). `EntityUseCase` genericise le CRUD partage par les entites gerees depuis l'UI.
+* **`infrastructure/` (Adaptateurs)** : Implantations concretes des interfaces `domain` : client BifrostAI, repositories SQLite (modernc, sans CGO), caches memoire en decorateur, routeurs de chat et d'embedding, moteurs ONNX locaux.
+* **`handlers/` (API)** : API compatible OpenAI (`/v1/chat/completions` y compris en SSE, `/v1/models`, `/v1/embeddings`), health checks, gestion d'erreurs. Le routage `/v1` est centralise dans `handlers.RegisterRoutes`, partage entre `main.go` et les tests de contrat. Le streaming est dans `handlers/stream.go`, la reponse unique dans `chat.go`.
+* **`web/` (Delivery UI)** : Facade `Server` (routing + assemblage) et sous-contrôleurs par domaine — `chatController`, `projectsController`, `modelsController`, `providersController`, `embeddingsController` — chacun ne détenant que ses ports ; le rendu et les helpers transverses vivent dans `uiShared` (SRP). Templates HTMX embarques (`go:embed`), routing Go 1.22 (`GET /models`, `POST /configs/{id}`, etc.).
+
+### Regles de dependance (Clean Architecture / SOLID)
+
+Les couches ne dependent que vers l'interieur, jamais vers l'exterieur :
+
+```
+handlers/  web/  →  application/  →  domain/   (0 dependance framework)
+infrastructure/   →  domain/                    (adaptateurs des ports)
+main.go           =  composition root (seul lieu qui assemble tout)
+```
+
+* **DIP** : `handlers/ports.go` et `web/ports.go` declarent, cote consommateur, les interfaces etroites dont chaque couche delivery a besoin ; les cas d'usage concrets sont injectes depuis `main.go`, jamais references par la presentation. `main.go` ne manipule que les ports `domain`, pas les classes SQLite.
+* **ISP** : chaque port ne porte que les methodes reellement utilisees (ex. `ChatCompletion` = `Send` + `Stream`, `ConfigQuerier` = `Active` + `List`) ; cote domaine, `LLMProvider` et `StreamingLLMProvider` sont separes : le streaming est une capacite, pas une obligation.
+* **OCP** : les decorateurs composable (cache de repositories, cache de reponses LLM, routeur de chat, routeur d'embeddings) enveloppent un port sans le modifier ; activer ou remplacer une brique se fait par wiring, pas par edition du code existant.
+* **SRP** : entites et regles metier dans `domain/`, orchestration dans `application/`, technique dans `infrastructure/`, presentation dans `handlers/` et `web/`, assemblage dans `main.go`.
+* **LSP** : chaque adaptateur (SQLite, cache, routeur, Bifrost, ONNX) remplace un port sans effet de bord surprise — les tests de contrat l'exercent sur les memes enregistrements que la production.
 
 ---
 

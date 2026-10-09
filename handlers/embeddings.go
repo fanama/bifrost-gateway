@@ -5,20 +5,19 @@ import (
 	"errors"
 	"net/http"
 
-	"bridge-gateway/application"
 	"bridge-gateway/domain"
 )
 
 type EmbeddingHandler struct {
-	auth       *application.AuthUseCase
-	embeddings *application.EmbeddingUseCase
-	configs    *application.ConfigUseCase
+	auth       Authenticator
+	embeddings Embedder
+	configs    ConfigQuerier
 }
 
 func NewEmbeddingHandler(
-	auth *application.AuthUseCase,
-	embeddings *application.EmbeddingUseCase,
-	configs *application.ConfigUseCase,
+	auth Authenticator,
+	embeddings Embedder,
+	configs ConfigQuerier,
 ) *EmbeddingHandler {
 	return &EmbeddingHandler{auth: auth, embeddings: embeddings, configs: configs}
 }

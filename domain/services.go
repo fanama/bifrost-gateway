@@ -41,10 +41,6 @@ func (s *EnrichmentService) Enrich(req *ChatRequest) (*EnrichedRequest, error) {
 	}, nil
 }
 
-func (s *EnrichmentService) ValidateAttribution(req *ChatRequest) error {
-	return nil
-}
-
 func hasSystemMessage(messages []ChatMessage) bool {
 	for _, m := range messages {
 		if m.Role == "system" {

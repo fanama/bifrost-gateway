@@ -176,15 +176,18 @@ func main() {
 	projectUseCase := application.NewProjectUseCase(uiProjectStore)
 	keyUseCase := application.NewAPIKeyUseCase(uiKeyStore, uiProjectStore)
 	authUseCase := application.NewAuthUseCase(os.Getenv("BIFROST_MASTER_KEY"), uiKeyStore, uiProjectStore)
+	// Un seul cas d'usage chat partage entre l'API et l'UI : il est sans etat,
+	// mais deux instances identiques ne serviraient qu'a rendre le wiring
+	// ambigu. Il voit le store non decore (etat le plus frais possible).
+	chatUseCase := application.NewChatUseCase(configStore, enrichmentService, llmProvider)
 	chatHandler := handlers.NewChatHandler(
 		enrichmentService,
 		authUseCase,
-		application.NewChatUseCase(configStore, enrichmentService, llmProvider),
+		chatUseCase,
 		application.NewConfigUseCase(configStore),
 	)
 
 	configUseCase := application.NewConfigUseCase(uiConfigStore)
-	chatUseCase := application.NewChatUseCase(configStore, enrichmentService, llmProvider)
 	modelUseCase := application.NewModelUseCase(gatewayModels(cfg), uiConfigStore, catalogStore)
 	providerUseCase := application.NewProviderUseCase(providerStore)
 	catalogUseCase := application.NewModelCatalogUseCase(catalogStore)
@@ -305,7 +308,8 @@ func main() {
 
 // migrateOrphanConfigs cree le projet "General" au demarrage et rattache
 // les configurations existantes qui n'appartiennent encore a aucun projet.
-func migrateOrphanConfigs(configStore *infrastructure.ChatConfigStore, projectStore *infrastructure.ProjectStore) {
+// Elle ne depend que des ports du domaine, pas des adaptateurs SQLite.
+func migrateOrphanConfigs(configStore domain.ChatConfigRepository, projectStore domain.ProjectRepository) {
 	ctx := context.Background()
 	projectsUC := application.NewProjectUseCase(projectStore)
 

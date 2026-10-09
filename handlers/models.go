@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"bridge-gateway/application"
 	"bridge-gateway/domain"
 )
 
@@ -14,11 +13,11 @@ import (
 // La liste provient du meme use case que l'UI : catalogue gerable, modeles de
 // config.yaml et modeles utilises par les configurations enregistrees.
 type ModelsHandler struct {
-	auth   *application.AuthUseCase
-	models *application.ModelUseCase
+	auth   Authenticator
+	models ModelLister
 }
 
-func NewModelsHandler(auth *application.AuthUseCase, models *application.ModelUseCase) *ModelsHandler {
+func NewModelsHandler(auth Authenticator, models ModelLister) *ModelsHandler {
 	return &ModelsHandler{auth: auth, models: models}
 }
 
