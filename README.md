@@ -226,25 +226,77 @@ make docker-down
 make docker-reset
 ```
 
-### 4. Configuration (`.env`)
+### 4. Render.com deployment
 
-```ini
-# Passerelle (port publie)
-BRIDGE_PORT=4000
+Bridge Gateway is a single Go binary with SQLite and a memory cache only, so a
+Render **Web Service** is enough: no database, cache, or worker box is required.
 
-# Persistance : SQLite, un simple fichier monte dans ./data
-# BRIDGE_DB="/app/data/bridge.db"
+#### One-click: Render composition file
 
-# Cache : local au processus, regle dans config.yaml (section `cache`)
+Add this file to the repository root as `render.yaml`. Replace `USERNAME` with your
+GitHub username and set the required environment variables in the Render UI.
 
-# BIFROST AI
-BIFROST_MASTER_KEY="cpZ75uPavZpwRLMjD0dj"
+```yaml
+services:
+  - type: web
+    name: bridge-gateway
+    runtime: docker
+    buildContext: .
+    envVars:
+      - key: BRIDGE_PORT
+        value: "4000"
+      - key: BIFROST_MASTER_KEY
+        sync: false
+      - key: ONNX_AUTO_DOWNLOAD
+        value: "0"
+      - key: OLLAMA_HOST
+        value: http://host.docker.internal:11434
+      - key: OLLAMA_HOST
+        value: http://10.0.0.1:11434
+        generated: true
 ```
 
-`BRIDGE_PORT` determine le port publie (docker compose) **et** le port d'ecoute
-local : la passerelle lit `.env` au demarrage, sans export prealable. Un
-`--port` explicite reste prioritaire — c'est le cas dans le conteneur, qui
-ecoute en interne sur 8080 pendant que l'hote publie `BRIDGE_PORT`.
+The generated `OLLAMA_HOST` lines are removed on Render, so drop them if you do not
+run a local Ollama. Disable `ONNX_AUTO_DOWNLOAD` when the image ships the ONNX
+artifacts under `models/` or when the build has no network access.
+
+#### Manual Dockerfile (optional)
+
+The included `Dockerfile` builds a `scratch` image from a Linux binary. Render's
+auto-detect uses the same shape: a `Dockerfile`, a local or remote build context,
+and the `bridge-gateway` binary plus `config.yaml` copied into the image.
+
+```dockerfile
+FROM scratch
+
+ARG TARGETARCH
+
+COPY config.yaml /config.yaml
+COPY certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY bin/bridge-gateway-linux-${TARGETARCH} /bridge-gateway
+
+ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+
+EXPOSE 4000
+
+ENTRYPOINT ["/bridge-gateway"]
+CMD ["--config", "/config.yaml", "--port", "4000"]
+```
+
+#### Data & secrets on Render
+
+| What | Where | How |
+| --- | --- | --- |
+| SQLite database | `/tmp/bridge-gateway.db` (fast local disk) or a persistent mount | `BRIDGE_DB` or `--db`; do not mount the repo `data/` directory unless you copy it into the image. |
+| Master key | Render **Environment** variables | `BIFROST_MASTER_KEY` (in clear text; it never leaves the process). |
+| Model parameters | Bundled at build time | `config.yaml`, `data/`, `models/onnx/` and `models/onnx/chat/` are baked into the image by `COPY`/build. |
+| Ollama endpoint | Render **Environment** variables or host DNS | `OLLAMA_HOST` (blank = `http://localhost:11434`; Render internal DNS uses `host.docker.internal`, typically `10.0.0.1:11434`). |
+
+`BRIDGE_PORT` decides the published port and the listening address: Render
+resolves it from the Web Service environment or `render.yaml`, and the process
+falls back to 8080 when neither is set. A `--port` flag passed on the start
+command still wins over everything else, so pre-warm a preview deployment with
+`--port 4000` if you need to pin a different port.
 
 ### 5. Persistance et cache
 
