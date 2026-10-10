@@ -1,0 +1,41 @@
+# Bridge Gateway - Render.com deployment manifest.
+
+Render auto-detects a `Dockerfile`, so this manifest is optional: the Web
+Service will build the same `scratch`-based image the Dockerfile describes.
+Provide it when your repo is a monorepo, or when you want a typed
+multi-service layout.
+
+Note: the GitHub username below is a placeholder. Render's "One-click
+Deploy" generates this file from the repo, so keep it in sync with
+`Dockerfile` and `Makefile` (the binaries are baked at build time).
+
+services:
+  - type: web
+    name: bridge-gateway
+    env: docker
+    plan: free
+    dockerfilePath: Dockerfile
+    buildContext: .
+    autoDeploy: false
+    envVars:
+      - key: BRIDGE_PORT
+        value: "4000"
+      - key: BIFROST_MASTER_KEY
+        sync: false
+        description: Master key for the gateway API; stays inside the process.
+      - key: ONNX_AUTO_DOWNLOAD
+        value: "0"
+        description: >-
+          Disable first-run ONNX artefact download. Set to "1" only if the
+          image does not contain models/ (not recommended: the first start
+          then runs a 100+ MB download).
+      - key: OLLAMA_HOST
+        value: http://10.0.0.1:11434
+        description: >-
+          Endpoint of the Ollama service in Render. Set to
+          http://host.docker.internal:11434 when the Ollama app runs on the
+          same Render container / network.
+networks:
+  llmaas:
+    name: bridge-gateway-net
+    internal: false
