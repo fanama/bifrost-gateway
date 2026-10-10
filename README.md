@@ -207,6 +207,15 @@ cross-compile le binaire Linux depuis les sources (`CGO_ENABLED=0`), et le runti
 > et ne demarre pas sur une base vide (erreur `missing dynamic library`). Le driver SQLite utilise reste **pur Go**
 > (`modernc.org/sqlite`), donc `CGO_ENABLED=0` suffit — pas de compilateur C dans l'image.
 
+> **Pourquoi un builder `golang:*-bookworm` et pas `golang:*-alpine` ?** Comme le binaire est lie dynamiquement,
+> l'editeur de liens Go y inscrit l'**interpreteur ELF** choisi *sur la machine de build* : il part du loader
+> glibc de la cible (`/lib64/ld-linux-x86-64.so.2`, `/lib/ld-linux-aarch64.so.1`) et bascule sur celui de musl
+> (`/lib/ld-musl-<arch>.so.1`) des qu'il ne le trouve pas — c'est le cas dans Alpine. Un builder Alpine produit
+> donc un binaire qui reclame `/lib/ld-musl-x86_64.so.1` et qui, copie dans l'image Debian, ne demarre plus :
+> `exec /bridge-gateway: no such file or directory` (ENOENT sur l'interpreteur, pas sur le binaire). Le builder
+> est donc glibc, comme le runtime, et l'etape runtime **execute le binaire une fois au build** (`--help`) pour
+> qu'un desaccord d'architecture/interpreteur casse le build au lieu du deploiement.
+
 > **Reseau avec Ollama** : dans le conteneur, `localhost` designe le conteneur lui-meme. Pour atteindre l'Ollama de
 > votre machine hote, le service `gateway` expose `host.docker.internal` et positionne
 > `OLLAMA_HOST=http://host.docker.internal:11434`. L'UI prefiltre donc automatiquement la Base URL
@@ -275,24 +284,36 @@ same shape: a `Dockerfile` and this repository as the build context — no
 prebuilt binary or host CA bundle is required, and `models/` stays out of the
 image (downloaded at first start).
 
+The builder is glibc-based on purpose, and the runtime stage runs the binary
+once: see `Dockerfile` for why an Alpine builder produces an image that dies
+with `exec /bridge-gateway: no such file or directory`.
+
 ```dockerfile
-# Builder: linux/$TARGETARCH binary compiled from the repo sources.
-FROM golang:1.26-alpine AS build
+# Builder: glibc, like the runtime — the Go linker records the ELF interpreter
+# of the *build* host, and an Alpine/musl builder records a musl loader that
+# the Debian runtime below does not have.
+FROM --platform=$BUILDPLATFORM golang:1.26-bookworm AS build
+ARG TARGETOS
+ARG TARGETARCH
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH:-amd64} \
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -trimpath -ldflags="-s -w" -o /out/bridge-gateway .
 
 # Runtime: glibc is required (purego dlopen()s libdl/libc for the ONNX engine).
-FROM debian:bookworm-slim
+FROM --platform=$TARGETPLATFORM debian:bookworm-slim
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 COPY config.yaml /config.yaml
 COPY --from=build /out/bridge-gateway /bridge-gateway
+
+# Fail the build, not the deploy, if the binary cannot run in this image.
+RUN timeout 30 /bridge-gateway --help > /dev/null 2>&1 \
+    || { echo "ERROR: /bridge-gateway cannot run in this image (wrong architecture or missing ELF interpreter)"; exit 1; }
 
 ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 
