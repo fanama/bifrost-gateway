@@ -1,13 +1,13 @@
 # Bridge Gateway - Render.com deployment manifest.
 
 Render auto-detects a `Dockerfile`, so this manifest is optional: the Web
-Service will build the same `scratch`-based image the Dockerfile describes.
+Service will build the same image the (multi-stage) Dockerfile describes.
 Provide it when your repo is a monorepo, or when you want a typed
 multi-service layout.
 
 Note: the GitHub username below is a placeholder. Render's "One-click
 Deploy" generates this file from the repo, so keep it in sync with
-`Dockerfile` and `Makefile` (the binaries are baked at build time).
+`Dockerfile` and `Makefile` (the binary is compiled inside the Docker build).
 
 services:
   - type: web
@@ -24,11 +24,11 @@ services:
         sync: false
         description: Master key for the gateway API; stays inside the process.
       - key: ONNX_AUTO_DOWNLOAD
-        value: "0"
+        value: "1"
         description: >-
-          Disable first-run ONNX artefact download. Set to "1" only if the
-          image does not contain models/ (not recommended: the first start
-          then runs a 100+ MB download).
+          The image builds from source and does not bundle models/
+          (gitignored): "1" downloads the ONNX artefacts on first start,
+          while "0" disables the local ONNX engines for an offline image.
       - key: OLLAMA_HOST
         value: http://10.0.0.1:11434
         description: >-

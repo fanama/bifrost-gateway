@@ -1,14 +1,18 @@
-*!
+# Keep the build context to what the in-image Go build needs.
+# The Dockerfile compiles from source, so only the gitignored / large local
+# artefacts are dropped here — a clean clone builds without any of them.
+#
+# Build artefacts (regenerated inside the image, never COPYed):
 bin/
-!bin/bridge-gateway
-!bin/bridge-gateway-linux
-!bin/bridge-gateway-linux-arm64
-!config.yaml
-!certs/
-!certs/ca-certificates.crt
-!models
-models/onnx
-!compose.yml
-!Dockerfile
-!Makefile
+certs/
 data/
+# Local ML assets: downloaded by the app at first start.
+models/
+# Secrets and VCS / transient state:
+.env
+.git
+.freebuff
+*.tmp
+*.out
+*.test
+.DS_Store

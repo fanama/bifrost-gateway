@@ -18,7 +18,10 @@ run: build
 test:
 	go test ./tests/ -v -count=1
 
-docker-up: build-linux
+# L'image compile elle-meme le binaire depuis les sources (voir Dockerfile) :
+# `build-linux` reste utile pour un binaire Linux local, mais n'est plus un
+# pre-requis de ces cibles (ni de bundle CA copie de l'hote).
+docker-up:
 	podman compose up --build -d
 
 docker-down:
@@ -27,7 +30,7 @@ docker-down:
 docker-logs:
 	podman compose logs -f
 
-docker-reset: build-linux
+docker-reset:
 	podman compose down -v
 	podman compose up --build -d
 

@@ -66,7 +66,7 @@ gteway-local/
 ├── go.mod / go.sum            # Dependencies Go
 ├── config.yaml                # Configuration BifrostAI + modeles
 ├── compose.yml                # Docker Compose (passerelle autonome : SQLite + cache memoire)
-├── Dockerfile                 # Build scratch (zero pull registre, binaire Linux local)
+├── Dockerfile                 # Build multi-stage : binaire Go compile dans l'image, runtime Debian glibc
 ├── Makefile                   # Raccourcis build/run/test
 ├── data/                      # Base SQLite (bridge.db) + anciens stores JSON a migrer
 ├── domain/                    # Cœur metier (0 dependance framework)
@@ -197,10 +197,15 @@ make test
 La passerelle n'a **aucune dependance externe** : la persistance est un fichier SQLite (`data/bridge.db`) et le cache
 est local au processus (en memoire). Postgres et Redis ont ete supprimes.
 
-`compose.yml` ne declare donc qu'un service, `gateway`. L'image est construite sans aucune dependance a un registre
-(`FROM scratch`) : le binaire Linux est cross-compile en local (`make build-linux`) puis copie dans l'image, avec le
-bundle CA copie de l'hote. Le driver SQLite utilise est **pur Go** (`modernc.org/sqlite`), donc `CGO_ENABLED=0` reste
-compatible avec ce build.
+`compose.yml` ne declare donc qu'un service, `gateway`. Le `Dockerfile` est **multi-stage** : une etape `golang`
+cross-compile le binaire Linux depuis les sources (`CGO_ENABLED=0`), et le runtime est une image **Debian** minimale
+(glibc + `ca-certificates`). Aucun artefact local ignore par git n'est requis — ni binaire pre-compile, ni
+`certs/`, ni `models/` : un clone propre construit l'image.
+
+> **Pourquoi Debian et pas `scratch` ?** Le moteur ONNX local charge son runtime avec `purego`, dont le chemin
+> sans CGO importe dynamiquement `libdl.so.2` / `libc.so.6` : le binaire est donc **lie dynamiquement a la glibc**
+> et ne demarre pas sur une base vide (erreur `missing dynamic library`). Le driver SQLite utilise reste **pur Go**
+> (`modernc.org/sqlite`), donc `CGO_ENABLED=0` suffit — pas de compilateur C dans l'image.
 
 > **Reseau avec Ollama** : dans le conteneur, `localhost` designe le conteneur lui-meme. Pour atteindre l'Ollama de
 > votre machine hote, le service `gateway` expose `host.docker.internal` et positionne
@@ -248,7 +253,7 @@ services:
       - key: BIFROST_MASTER_KEY
         sync: false
       - key: ONNX_AUTO_DOWNLOAD
-        value: "0"
+        value: "1"
       - key: OLLAMA_HOST
         value: http://host.docker.internal:11434
       - key: OLLAMA_HOST
@@ -257,23 +262,37 @@ services:
 ```
 
 The generated `OLLAMA_HOST` lines are removed on Render, so drop them if you do not
-run a local Ollama. Disable `ONNX_AUTO_DOWNLOAD` when the image ships the ONNX
-artifacts under `models/` or when the build has no network access.
+run a local Ollama. `models/` is gitignored and not part of the image, so leave
+`ONNX_AUTO_DOWNLOAD` enabled (`1`) to fetch the ONNX artifacts on first start, or
+set it to `0` when the deploy must stay offline.
 
 #### Manual Dockerfile (optional)
 
-The included `Dockerfile` builds a `scratch` image from a Linux binary. Render's
-auto-detect uses the same shape: a `Dockerfile`, a local or remote build context,
-and the `bridge-gateway` binary plus `config.yaml` copied into the image.
+The included `Dockerfile` compiles the gateway from source and ships it in a
+small Debian (glibc) image — not `scratch`, because the purego-loaded ONNX
+runtime links the binary against `libdl`/`libc`. Render's auto-detect uses the
+same shape: a `Dockerfile` and this repository as the build context — no
+prebuilt binary or host CA bundle is required, and `models/` stays out of the
+image (downloaded at first start).
 
 ```dockerfile
-FROM scratch
+# Builder: linux/$TARGETARCH binary compiled from the repo sources.
+FROM golang:1.26-alpine AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH:-amd64} \
+    go build -trimpath -ldflags="-s -w" -o /out/bridge-gateway .
 
-ARG TARGETARCH
+# Runtime: glibc is required (purego dlopen()s libdl/libc for the ONNX engine).
+FROM debian:bookworm-slim
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY config.yaml /config.yaml
-COPY certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
-COPY bin/bridge-gateway-linux-${TARGETARCH} /bridge-gateway
+COPY --from=build /out/bridge-gateway /bridge-gateway
 
 ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 
@@ -289,7 +308,7 @@ CMD ["--config", "/config.yaml", "--port", "4000"]
 | --- | --- | --- |
 | SQLite database | `/tmp/bridge-gateway.db` (fast local disk) or a persistent mount | `BRIDGE_DB` or `--db`; do not mount the repo `data/` directory unless you copy it into the image. |
 | Master key | Render **Environment** variables | `BIFROST_MASTER_KEY` (in clear text; it never leaves the process). |
-| Model parameters | Bundled at build time | `config.yaml`, `data/`, `models/onnx/` and `models/onnx/chat/` are baked into the image by `COPY`/build. |
+| Model parameters | `config.yaml` baked at build time; ONNX assets downloaded at first start | `config.yaml` is `COPY`ed into the image; `models/onnx/` is gitignored, so the ONNX artifacts are fetched at runtime (`ONNX_AUTO_DOWNLOAD`). |
 | Ollama endpoint | Render **Environment** variables or host DNS | `OLLAMA_HOST` (blank = `http://localhost:11434`; Render internal DNS uses `host.docker.internal`, typically `10.0.0.1:11434`). |
 
 `BRIDGE_PORT` decides the published port and the listening address: Render
