@@ -1,9 +1,13 @@
-*
-!bin/
+*!
+bin/
+!bin/bridge-gateway
 !bin/bridge-gateway-linux
+!bin/bridge-gateway-linux-arm64
 !config.yaml
 !certs/
 !certs/ca-certificates.crt
+!models
+models/onnx
 !compose.yml
 !Dockerfile
 !Makefile

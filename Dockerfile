@@ -26,7 +26,7 @@ COPY config.yaml /config.yaml
 COPY models models
 
 # Gateway binary (linux/$TARGETARCH).
-COPY bin/bridge-gateway-linux-${TARGETARCH} /bridge-gateway
+COPY bin/bridge-gateway-linux /bridge-gateway
 
 ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 
