@@ -1,7 +1,6 @@
 package web
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -18,92 +17,6 @@ import (
 type embeddingsController struct {
 	uiShared
 	embeddings embeddingService
-}
-
-// ---- Embeddings ----
-
-type EmbedSampleBar struct {
-	Height   int
-	Value    string
-	Positive bool
-}
-
-type EmbedResultItem struct {
-	Index      int
-	Text       string
-	Count      int
-	SampleBars []EmbedSampleBar
-	JSONVector string
-	CSVVector  string
-}
-
-func cosineSimilarity(a, b []float32) float64 {
-	if len(a) == 0 || len(a) != len(b) {
-		return 0
-	}
-	var dot, normA, normB float64
-	for i := range a {
-		va := float64(a[i])
-		vb := float64(b[i])
-		dot += va * vb
-		normA += va * va
-		normB += vb * vb
-	}
-	if normA == 0 || normB == 0 {
-		return 0
-	}
-	return dot / (math.Sqrt(normA) * math.Sqrt(normB))
-}
-
-// embeddingChoices rend la liste complete proposee au testeur : la liste
-// curatee, puis les modeles du catalogue declares de type embedding (ajoutes
-// depuis la page Modeles), sans doublon par identifiant. Une erreur de lecture
-// est remontee : taire le catalogue priverait silencieusement l'utilisateur
-// de ses propres modeles.
-func (s *embeddingsController) embeddingChoices(ctx context.Context) ([]domain.EmbeddingChoice, error) {
-	choices := make([]domain.EmbeddingChoice, 0, len(domain.EmbeddingChoices)+4)
-	seen := make(map[string]bool, len(domain.EmbeddingChoices)+4)
-	for _, c := range domain.EmbeddingChoices {
-		choices = append(choices, c)
-		seen[strings.ToLower(c.Model)] = true
-	}
-	models, err := s.models.List(ctx)
-	if err != nil {
-		return nil, err
-	}
-	for _, m := range models {
-		choice, ok := domain.EmbeddingChoiceFromModel(m)
-		if !ok {
-			continue
-		}
-		key := strings.ToLower(choice.Model)
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-		choices = append(choices, choice)
-	}
-	return choices, nil
-}
-
-// findEmbeddingChoice cherche un modele dans la liste complete du testeur,
-// insensible a la casse : un modele issu du catalogue se selectionne et se
-// resout exactement comme un choix curate.
-func (s *embeddingsController) findEmbeddingChoice(ctx context.Context, modelID string) (*domain.EmbeddingChoice, error) {
-	if choice := domain.FindEmbeddingChoice(modelID); choice != nil {
-		return choice, nil
-	}
-	choices, err := s.embeddingChoices(ctx)
-	if err != nil {
-		return nil, err
-	}
-	name := strings.TrimSpace(modelID)
-	for i := range choices {
-		if strings.EqualFold(choices[i].Model, name) {
-			return &choices[i], nil
-		}
-	}
-	return nil, nil
 }
 
 // pageEmbeddings rend le testeur. La page expose la liste curatee des
@@ -221,54 +134,7 @@ func (s *embeddingsController) computeEmbeddings(w http.ResponseWriter, r *http.
 		return
 	}
 
-	var items []EmbedResultItem
-	for i, item := range resp.Data {
-		textLabel := ""
-		if i < len(inputs) {
-			textLabel = inputs[i]
-		}
-
-		var strFloats []string
-		for _, f := range item.Embedding {
-			strFloats = append(strFloats, fmt.Sprintf("%.6f", f))
-		}
-		jsonVec, _ := json.Marshal(item.Embedding)
-
-		sampleCount := 40
-		if len(item.Embedding) < sampleCount {
-			sampleCount = len(item.Embedding)
-		}
-		var maxVal float32 = 0.0001
-		for _, v := range item.Embedding[:sampleCount] {
-			abs := float32(math.Abs(float64(v)))
-			if abs > maxVal {
-				maxVal = abs
-			}
-		}
-
-		var bars []EmbedSampleBar
-		for _, v := range item.Embedding[:sampleCount] {
-			abs := float32(math.Abs(float64(v)))
-			h := int((abs/maxVal)*90) + 10
-			if h > 100 {
-				h = 100
-			}
-			bars = append(bars, EmbedSampleBar{
-				Height:   h,
-				Value:    fmt.Sprintf("%.5f", v),
-				Positive: v >= 0,
-			})
-		}
-
-		items = append(items, EmbedResultItem{
-			Index:      item.Index,
-			Text:       textLabel,
-			Count:      len(item.Embedding),
-			SampleBars: bars,
-			JSONVector: string(jsonVec),
-			CSVVector:  strings.Join(strFloats, ","),
-		})
-	}
+	items := buildEmbedResultItems(resp.Data, inputs)
 
 	hasSim := false
 	var sim float64

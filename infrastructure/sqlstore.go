@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"fmt"
 	"strings"
 
 	_ "modernc.org/sqlite" // driver SQLite pur Go (compatible CGO_ENABLED=0 / image scratch)
@@ -243,34 +242,4 @@ func scanAll[T any](rows *sql.Rows) ([]T, error) {
 		out = append(out, item)
 	}
 	return out, rows.Err()
-}
-
-// ensureTable cree la table d'une collection si elle n'existe pas encore. Le
-// payload est stocke en JSON : le schema reste stable quelle que soit l'evolution
-// des entites du domaine, et les colonnes extraites servent aux index.
-func ensureTable(db *sql.DB, table string) error {
-	ddl := fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s (id TEXT PRIMARY KEY, payload TEXT NOT NULL)", quoteIdent(table))
-	if _, err := db.Exec(ddl); err != nil {
-		return fmt.Errorf("create table %s: %w", table, err)
-	}
-	return nil
-}
-
-// createJSONIndex declare un index sur une ou plusieurs colonnes extraites du
-// payload JSON, ce qui evite de dupliquer chaque colonne metier dans le schema.
-func createJSONIndex(db *sql.DB, name, table string, jsonPaths ...string) error {
-	targets := make([]string, len(jsonPaths))
-	for i, path := range jsonPaths {
-		targets[i] = fmt.Sprintf("json_extract(payload, '%s')", path)
-	}
-	ddl := fmt.Sprintf("CREATE INDEX IF NOT EXISTS %s ON %s (%s)",
-		quoteIdent(name), quoteIdent(table), strings.Join(targets, ", "))
-	if _, err := db.Exec(ddl); err != nil {
-		return fmt.Errorf("create index %s: %w", name, err)
-	}
-	return nil
-}
-
-func quoteIdent(name string) string {
-	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
 }

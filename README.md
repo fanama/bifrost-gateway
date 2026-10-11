@@ -62,7 +62,8 @@ Chaque requete passe par les etapes suivantes avant d'atteindre le LLM :
 
 ```
 gteway-local/
-├── main.go                    # Point d'entree : composition root (wiring, seeds, serveur HTTP)
+├── main.go                    # Point d'entree : cablage, serveur HTTP, arret gracieux
+├── wiring.go                  # Helpers de composition (seeds catalogue/providers, caches, provider LLM)
 ├── go.mod / go.sum            # Dependencies Go
 ├── config.yaml                # Configuration BifrostAI + modeles
 ├── compose.yml                # Docker Compose (passerelle autonome : SQLite + cache memoire)
@@ -72,14 +73,17 @@ gteway-local/
 ├── domain/                    # Cœur metier (0 dependance framework)
 │   ├── store.go               # CrudRepository[T] / UpdatableRepository[T] (ports generiques)
 │   ├── models.go, chat.go     # Metadata, ChatMessage, ChatRequest, EnrichedRequest
-│   ├── config.go              # ChatConfig (entite), ChatConfigRepository, tiers de routage
+│   ├── config.go              # ChatConfig (entite) + ChatConfigRepository
+│   ├── config_tier.go         # Echelle de routage (tiers, rangs, options)
+│   ├── config_response_format.go  # Format de reponse + parsing JSON Schema
 │   ├── project.go, apikey.go  # Project, APIKey (empreinte sha256) + repositories
 │   ├── provider.go, model.go, modelcatalog.go  # Provider, ModelInfo, CatalogModel + ports
 │   ├── embedding.go           # EmbeddingRequest/Response + EmbeddingProvider (port)
 │   ├── llm.go                 # LLMProvider, StreamingLLMProvider, Classifier (ports)
 │   ├── cache.go               # Cache (port) + CacheKeyFactory
 │   ├── services.go            # EnrichmentService (pipeline d'enrichissement)
-│   ├── schema.go              # JSON Schema (validation, mode strict, constructeur)
+│   ├── schema.go              # JSON Schema (constructeur, mode strict)
+│   ├── schema_property.go, schema_form.go  # Proprietes du schema + rehydratation du formulaire
 │   └── errors.go, id.go       # Erreurs metier, generation d'identifiants
 ├── application/               # Cas d'usage (depend UNIQUEMENT de domain)
 │   ├── entity.go              # EntityUseCase generique (CRUD partage)
@@ -91,22 +95,25 @@ gteway-local/
 │   ├── sqlstore.go, sqlschema.go  # SQLite (modernc, sans CGO) + migrations
 │   ├── config_store.go, project_store.go, apikey_store.go,
 │   │   provider_store.go, modelcatalog_store.go  # Repositories SQLite
-│   ├── cachedstore.go, cachedllm.go, memorycache.go  # Decorateurs de cache (OCP)
-│   ├── bifrost.go, runtime.go, account.go  # Client BifrostAI + LLMProvider
-│   ├── chatrouter.go, routing.go, classifier.go, failover.go, cooldown.go  # Routage par tier
-│   ├── embeddingrouter.go, localembedder.go, onnxembedder.go  # 3 moteurs d'embedding
-│   ├── onnxchat*.go, onnxassets.go, onnxmodels.go, wordpiece.go  # Moteurs ONNX locaux (sans CGO)
+│   ├── cachedstore.go, cachedapikeystore.go, cachedprojectstore.go, cachedllm.go, memorycache.go  # Decorateurs de cache (OCP)
+│   ├── bifrost.go, bifrost_provider.go, bifrost_convert.go, provider_mapping.go, dynamic_account.go, account.go  # Client BifrostAI + LLMProvider
+│   ├── chatrouter.go, routing.go, routing_ladder.go, routing_stream.go, classifier.go, failover.go, cooldown.go  # Routage par tier
+│   ├── embeddingrouter.go, localembedder.go, local_hasher.go, embedding_format.go  # Moteur d'embedding embarque + format
+│   ├── onnxembedder.go, onnxembedder_session.go, onnxembedder_infer.go, onnxoptions.go  # Moteur d'embedding ONNX
+│   ├── onnxchat*.go, onnxassets.go, onnxdownload.go, onnxmodels.go, wordpiece.go  # Moteurs ONNX locaux (sans CGO)
 │   ├── jsonimport.go          # Migration des anciens stores JSON
 │   └── config.go, port.go     # Chargement config.yaml, resolution du port
 ├── handlers/                  # API compatible OpenAI (delivery)
 │   ├── ports.go               # Interfaces de consommateur (DIP/ISP)
 │   ├── routes.go              # RegisterRoutes (partage production + tests de contrat)
-│   ├── chat.go, stream.go     # Completions (reponse JSON + SSE)
+│   ├── chat.go, stream.go, sse.go  # Completions (reponse JSON + SSE)
+│   ├── response.go, errors.go # Corps de reponse OpenAI + enveloppe d'erreur
 │   └── models.go, embeddings.go, cors.go
 ├── web/                       # Couche de delivery (HTMX), decoupee par domaine (SRP)
 │   ├── ports.go               # Interfaces de consommateur (DIP/ISP)
 │   ├── server.go              # Façade : uiShared (rendu), assemblage des sous-contrôleurs, routing
-│   ├── chat.go, projects.go   # Sous-contrôleurs : discussion, projets + configs + cles
+│   ├── chat.go, projects.go, project_configs.go, project_keys.go  # Sous-contrôleurs : discussion, projets + configs + cles
+│   ├── embeddings.go, embedding_choices.go, embedding_view.go  # Testeur d'embeddings
 │   ├── models.go, providers.go, embeddings.go  # Sous-contrôleurs : catalogue, providers, testeur
 │   ├── forms.go               # Parsing des formulaires de configuration (parties pures)
 │   ├── static/htmx.min.js     # HTMX vendorise (embarque dans le binaire)
