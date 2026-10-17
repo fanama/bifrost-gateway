@@ -88,41 +88,44 @@ func (p *OnnxChatProvider) ChatStream(ctx context.Context, cfg *domain.ChatConfi
 	model := chatResultModel(cfg)
 	go func() {
 		defer close(out)
-		sent := ""
-		first := true
-		emit := func(text string) error {
-			delta := ""
-			if strings.HasPrefix(text, sent) {
-				delta = text[len(sent):]
-			}
-			sent = text
-			if delta == "" {
-				return nil
-			}
-			ev := domain.StreamEvent{Delta: delta, Model: model}
-			if first {
-				ev.Role = "assistant"
-				first = false
-			}
-			select {
-			case out <- ev:
-				return nil
-			case <-ctx.Done():
-				return ctx.Err()
-			}
-		}
-		_, err := p.generate(ctx, cfg, messages, emit)
-		if err != nil {
-			select {
-			case out <- domain.StreamEvent{Err: err, Model: model}:
-			case <-ctx.Done():
-			}
+		emitter := &generationEmitter{ctx: ctx, out: out, model: model}
+		if _, err := p.generate(ctx, cfg, messages, emitter.emit); err != nil {
+			sendStreamEvent(ctx, out, domain.StreamEvent{Err: err, Model: model})
 			return
 		}
-		select {
-		case out <- domain.StreamEvent{Model: model, Done: true}:
-		case <-ctx.Done():
-		}
+		sendStreamEvent(ctx, out, domain.StreamEvent{Model: model, Done: true})
 	}()
 	return out, nil
+}
+
+// generationEmitter converts cumulative model text into deltas, keeping UTF-8
+// runes intact and emitting the assistant role exactly once.
+type generationEmitter struct {
+	ctx   context.Context
+	out   chan<- domain.StreamEvent
+	model string
+	sent  string
+	first bool
+}
+
+func (e *generationEmitter) emit(text string) error {
+	delta := ""
+	if strings.HasPrefix(text, e.sent) {
+		delta = text[len(e.sent):]
+	}
+	e.sent = text
+	if delta == "" {
+		return nil
+	}
+	event := domain.StreamEvent{Delta: delta, Model: e.model}
+	if !e.first {
+		e.first = true
+		event.Role = "assistant"
+	}
+	select {
+	case e.out <- event:
+		return nil
+	case <-e.ctx.Done():
+		return e.ctx.Err()
+	}
 }

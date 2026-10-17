@@ -24,33 +24,40 @@ func toDomainEmbeddingResponse(resp *schemas.BifrostEmbeddingResponse, defaultMo
 	if obj == "" {
 		obj = "list"
 	}
-	data := make([]domain.EmbeddingItem, len(resp.Data))
-	for i, d := range resp.Data {
+	return &domain.EmbeddingResponse{
+		Object: obj,
+		Data:   toDomainEmbeddingItems(resp.Data),
+		Model:  model,
+		Usage:  toDomainEmbeddingUsage(resp.Usage),
+	}
+}
+
+func toDomainEmbeddingItems(data []schemas.EmbeddingData) []domain.EmbeddingItem {
+	items := make([]domain.EmbeddingItem, len(data))
+	for i, d := range data {
 		itemObj := d.Object
 		if itemObj == "" {
 			itemObj = "embedding"
 		}
-		data[i] = domain.EmbeddingItem{
+		items[i] = domain.EmbeddingItem{
 			Index:        d.Index,
 			Object:       itemObj,
 			Embedding:    d.Embedding.EmbeddingArray,
 			EmbeddingStr: d.Embedding.EmbeddingStr,
 		}
 	}
-	usage := domain.EmbeddingUsage{}
-	if resp.Usage != nil {
-		usage.PromptTokens = resp.Usage.PromptTokens
-		usage.TotalTokens = resp.Usage.TotalTokens
-		if usage.TotalTokens == 0 && usage.PromptTokens > 0 {
-			usage.TotalTokens = usage.PromptTokens
-		}
+	return items
+}
+
+func toDomainEmbeddingUsage(usage *schemas.BifrostLLMUsage) domain.EmbeddingUsage {
+	if usage == nil {
+		return domain.EmbeddingUsage{}
 	}
-	return &domain.EmbeddingResponse{
-		Object: obj,
-		Data:   data,
-		Model:  model,
-		Usage:  usage,
+	out := domain.EmbeddingUsage{PromptTokens: usage.PromptTokens, TotalTokens: usage.TotalTokens}
+	if out.TotalTokens == 0 && out.PromptTokens > 0 {
+		out.TotalTokens = out.PromptTokens
 	}
+	return out
 }
 
 // toBifrostMessages convertit les messages du domaine vers Bifrost. Partage par

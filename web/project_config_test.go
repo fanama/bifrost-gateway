@@ -61,7 +61,10 @@ func TestProjectConfigModelsHandler(t *testing.T) {
 	catalogUC := application.NewModelCatalogUseCase(catalogStore)
 	modelUC := application.NewModelUseCase(nil, configStore, catalogStore)
 
-	server := NewServer(nil, configUC, modelUC, projectUC, keyUC, providerUC, catalogUC, nil, "http://localhost:11434")
+	server, err := NewServer(nil, configUC, modelUC, projectUC, keyUC, providerUC, catalogUC, nil, nil, "http://localhost:11434")
+	if err != nil {
+		t.Fatalf("new server: %v", err)
+	}
 	mux := http.NewServeMux()
 	server.Register(mux)
 

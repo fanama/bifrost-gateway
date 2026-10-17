@@ -81,6 +81,11 @@ func newOnnxChatTokenizer(path string) (*onnxChatTokenizer, error) {
 	if len(doc.Model.Vocab) == 0 || len(doc.Model.Merges) == 0 {
 		return nil, fmt.Errorf("onnx chat tokenizer: empty vocab or merges in %s", path)
 	}
+	return newTokenizerFromDoc(doc), nil
+}
+
+// newTokenizerFromDoc builds the lookup tables from a validated BPE document.
+func newTokenizerFromDoc(doc chatTokenizerJSON) *onnxChatTokenizer {
 	t := &onnxChatTokenizer{
 		vocab: doc.Model.Vocab,
 		ranks: make(map[string]int, len(doc.Model.Merges)),
@@ -98,18 +103,23 @@ func newOnnxChatTokenizer(path string) (*onnxChatTokenizer, error) {
 		}
 	}
 	sort.Slice(t.specials, func(i, j int) bool { return len(t.specials[i]) > len(t.specials[j]) })
-	buildByteTable(&t.byteTable)
-	t.unbyte = make(map[rune]byte, 256)
-	for b := 0; b < 256; b++ {
-		t.unbyte[t.byteTable[b]] = byte(b)
-	}
+	t.buildByteTables()
 	t.byID = make(map[int]string, len(t.vocab))
 	for tok, id := range t.vocab {
 		if _, dup := t.byID[id]; !dup {
 			t.byID[id] = tok
 		}
 	}
-	return t, nil
+	return t
+}
+
+// buildByteTables fills the byte-level encodings used by Encode and Decode.
+func (t *onnxChatTokenizer) buildByteTables() {
+	buildByteTable(&t.byteTable)
+	t.unbyte = make(map[rune]byte, 256)
+	for b := 0; b < 256; b++ {
+		t.unbyte[t.byteTable[b]] = byte(b)
+	}
 }
 
 // Decode inverse Encode : les ids sont rendus en octets via le mapping

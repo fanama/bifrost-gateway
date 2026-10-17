@@ -13,53 +13,19 @@ import (
 // runLocked tokenise le lot, execute le modele designe par state et pool les
 // sorties en un vecteur L2-normalise par texte.
 func (e *OnnxEmbedder) runLocked(ctx context.Context, texts []string, state *onnxModelState) ([][]float32, error) {
-	batch := len(texts)
-	seq := state.tok.maxSeqLen
-
-	ids := make([]int64, batch*seq)
-	mask := make([]int64, batch*seq)
-	types := make([]int64, batch*seq)
-	for i, text := range texts {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		tIDs, tMask, tTypes := state.tok.encode(text)
-		copy(ids[i*seq:], tIDs)
-		copy(mask[i*seq:], tMask)
-		copy(types[i*seq:], tTypes)
+	batch, seq := len(texts), state.tok.maxSeqLen
+	ids, mask, types, err := encodeEmbeddingBatch(ctx, texts, state.tok, seq)
+	if err != nil {
+		return nil, err
 	}
 
-	// Seuls les inputs reels du modele sont fournis : passer token_type_ids
-	// a un modele qui ne les declare pas fait echouer toute l'inference.
-	available := make(map[string]bool, 3)
-	for _, name := range state.session.InputNames() {
-		available[name] = true
-	}
+	available := sessionInputs(state.session)
 	if !available["input_ids"] {
 		return nil, &domain.InvalidRequestError{Param: "model", Reason: "onnx model has no input_ids input; unsupported architecture"}
 	}
-
-	inputs := map[string]*onnxruntime.Value{}
-	closeInputs := func() {
-		for _, v := range inputs {
-			v.Close()
-		}
-	}
-	var err error
-	if inputs["input_ids"], err = onnxruntime.NewTensorValue[int64](e.runtime, ids, []int64{int64(batch), int64(seq)}); err != nil {
-		return nil, fmt.Errorf("onnx input_ids: %w", err)
-	}
-	if available["attention_mask"] {
-		if inputs["attention_mask"], err = onnxruntime.NewTensorValue[int64](e.runtime, mask, []int64{int64(batch), int64(seq)}); err != nil {
-			closeInputs()
-			return nil, fmt.Errorf("onnx attention_mask: %w", err)
-		}
-	}
-	if available["token_type_ids"] {
-		if inputs["token_type_ids"], err = onnxruntime.NewTensorValue[int64](e.runtime, types, []int64{int64(batch), int64(seq)}); err != nil {
-			closeInputs()
-			return nil, fmt.Errorf("onnx token_type_ids: %w", err)
-		}
+	inputs, closeInputs, err := e.embeddingInputs(available, ids, mask, types, batch, seq)
+	if err != nil {
+		return nil, err
 	}
 	defer closeInputs()
 
@@ -75,7 +41,20 @@ func (e *OnnxEmbedder) runLocked(ctx context.Context, texts []string, state *onn
 		}
 	}()
 
-	value, name, err := pickEmbeddingOutput(state.session, outputs)
+	vectors, err := embeddingVectors(state.session, outputs, mask, batch, seq)
+	if err != nil {
+		return nil, err
+	}
+	if state.dims == 0 && len(vectors) > 0 {
+		state.dims = len(vectors[0])
+	}
+	return vectors, nil
+}
+
+// embeddingVectors picks the model output, pools it, and L2-normalizes each
+// text vector.
+func embeddingVectors(session *onnxruntime.Session, outputs map[string]*onnxruntime.Value, mask []int64, batch, seq int) ([][]float32, error) {
+	value, name, err := pickEmbeddingOutput(session, outputs)
 	if err != nil {
 		return nil, err
 	}
@@ -83,7 +62,6 @@ func (e *OnnxEmbedder) runLocked(ctx context.Context, texts []string, state *onn
 	if err != nil {
 		return nil, fmt.Errorf("onnx read %s: %w", name, err)
 	}
-
 	vectors, err := poolOutput(data, shape, mask, batch, seq)
 	if err != nil {
 		return nil, err
@@ -91,10 +69,62 @@ func (e *OnnxEmbedder) runLocked(ctx context.Context, texts []string, state *onn
 	for _, vec := range vectors {
 		l2Normalize(vec)
 	}
-	if state.dims == 0 && len(vectors) > 0 {
-		state.dims = len(vectors[0])
-	}
 	return vectors, nil
+}
+
+// encodeEmbeddingBatch tokenizes each text into fixed-width rows.
+func encodeEmbeddingBatch(ctx context.Context, texts []string, tok *wordPieceTokenizer, seq int) (ids, mask, types []int64, err error) {
+	batch := len(texts)
+	ids = make([]int64, batch*seq)
+	mask = make([]int64, batch*seq)
+	types = make([]int64, batch*seq)
+	for i, text := range texts {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, nil, err
+		}
+		tIDs, tMask, tTypes := tok.encode(text)
+		copy(ids[i*seq:], tIDs)
+		copy(mask[i*seq:], tMask)
+		copy(types[i*seq:], tTypes)
+	}
+	return ids, mask, types, nil
+}
+
+func sessionInputs(session *onnxruntime.Session) map[string]bool {
+	available := make(map[string]bool, 3)
+	for _, name := range session.InputNames() {
+		available[name] = true
+	}
+	return available
+}
+
+// embeddingInputs only sends tensors the model declares: passing
+// token_type_ids to a model without them fails the whole inference.
+func (e *OnnxEmbedder) embeddingInputs(available map[string]bool, ids, mask, types []int64, batch, seq int) (map[string]*onnxruntime.Value, func(), error) {
+	inputs := map[string]*onnxruntime.Value{}
+	closeInputs := func() {
+		for _, v := range inputs {
+			v.Close()
+		}
+	}
+	shape := []int64{int64(batch), int64(seq)}
+	var err error
+	if inputs["input_ids"], err = onnxruntime.NewTensorValue[int64](e.runtime, ids, shape); err != nil {
+		return nil, nil, fmt.Errorf("onnx input_ids: %w", err)
+	}
+	if available["attention_mask"] {
+		if inputs["attention_mask"], err = onnxruntime.NewTensorValue[int64](e.runtime, mask, shape); err != nil {
+			closeInputs()
+			return nil, nil, fmt.Errorf("onnx attention_mask: %w", err)
+		}
+	}
+	if available["token_type_ids"] {
+		if inputs["token_type_ids"], err = onnxruntime.NewTensorValue[int64](e.runtime, types, shape); err != nil {
+			closeInputs()
+			return nil, nil, fmt.Errorf("onnx token_type_ids: %w", err)
+		}
+	}
+	return inputs, closeInputs, nil
 }
 
 // pickEmbeddingOutput choisit la sortie a pooler, par preference
@@ -123,54 +153,69 @@ func pickEmbeddingOutput(session *onnxruntime.Session, outputs map[string]*onnxr
 func poolOutput(data []float32, shape, mask []int64, batch, seq int) ([][]float32, error) {
 	switch len(shape) {
 	case 2:
-		if int(shape[0]) != batch {
-			return nil, fmt.Errorf("onnx output batch mismatch: %d != %d", shape[0], batch)
-		}
-		dims := int(shape[1])
-		if len(data) != batch*dims {
-			return nil, fmt.Errorf("onnx output size mismatch: %d != %d", len(data), batch*dims)
-		}
-		out := make([][]float32, batch)
-		for i := range out {
-			vec := make([]float32, dims)
-			copy(vec, data[i*dims:(i+1)*dims])
-			out[i] = vec
-		}
-		return out, nil
+		return poolSentenceEmbedding(data, shape, batch)
 	case 3:
-		if int(shape[0]) != batch || int(shape[1]) != seq {
-			return nil, fmt.Errorf("onnx output shape mismatch: %v (batch %d, seq %d)", shape, batch, seq)
-		}
-		dims := int(shape[2])
-		if len(data) != batch*seq*dims {
-			return nil, fmt.Errorf("onnx output size mismatch: %d != %d", len(data), batch*seq*dims)
-		}
-		out := make([][]float32, batch)
-		for i := 0; i < batch; i++ {
-			vec := make([]float32, dims)
-			count := int64(0)
-			for s := 0; s < seq; s++ {
-				if mask[i*seq+s] == 0 {
-					continue
-				}
-				count++
-				base := (i*seq + s) * dims
-				for d := 0; d < dims; d++ {
-					vec[d] += data[base+d]
-				}
-			}
-			if count > 0 {
-				inv := float32(1) / float32(count)
-				for d := range vec {
-					vec[d] *= inv
-				}
-			}
-			out[i] = vec
-		}
-		return out, nil
+		return poolTokenEmbeddings(data, shape, mask, batch, seq)
 	default:
 		return nil, fmt.Errorf("unsupported onnx output rank %d (shape %v)", len(shape), shape)
 	}
+}
+
+// poolSentenceEmbedding copies an already-pooled [batch, dims] output.
+func poolSentenceEmbedding(data []float32, shape []int64, batch int) ([][]float32, error) {
+	if int(shape[0]) != batch {
+		return nil, fmt.Errorf("onnx output batch mismatch: %d != %d", shape[0], batch)
+	}
+	dims := int(shape[1])
+	if len(data) != batch*dims {
+		return nil, fmt.Errorf("onnx output size mismatch: %d != %d", len(data), batch*dims)
+	}
+	out := make([][]float32, batch)
+	for i := range out {
+		vec := make([]float32, dims)
+		copy(vec, data[i*dims:(i+1)*dims])
+		out[i] = vec
+	}
+	return out, nil
+}
+
+// poolTokenEmbeddings averages [batch, seq, dims] over real positions, using
+// the attention mask to exclude padding.
+func poolTokenEmbeddings(data []float32, shape []int64, mask []int64, batch, seq int) ([][]float32, error) {
+	if int(shape[0]) != batch || int(shape[1]) != seq {
+		return nil, fmt.Errorf("onnx output shape mismatch: %v (batch %d, seq %d)", shape, batch, seq)
+	}
+	dims := int(shape[2])
+	if len(data) != batch*seq*dims {
+		return nil, fmt.Errorf("onnx output size mismatch: %d != %d", len(data), batch*seq*dims)
+	}
+	out := make([][]float32, batch)
+	for i := 0; i < batch; i++ {
+		out[i] = meanPoolRow(data, mask, i, seq, dims)
+	}
+	return out, nil
+}
+
+func meanPoolRow(data []float32, mask []int64, row, seq, dims int) []float32 {
+	vec := make([]float32, dims)
+	count := int64(0)
+	for s := 0; s < seq; s++ {
+		if mask[row*seq+s] == 0 {
+			continue
+		}
+		count++
+		base := (row*seq + s) * dims
+		for d := 0; d < dims; d++ {
+			vec[d] += data[base+d]
+		}
+	}
+	if count > 0 {
+		inv := float32(1) / float32(count)
+		for d := range vec {
+			vec[d] *= inv
+		}
+	}
+	return vec
 }
 
 // l2Normalize ramene un vecteur sur la sphere unite : la similarite cosinus

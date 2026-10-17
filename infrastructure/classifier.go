@@ -64,37 +64,43 @@ func (c *LocalClassifier) Classify(ctx context.Context, messages []domain.ChatMe
 	if err != nil {
 		return "", 0, err
 	}
-
-	cfg := c.config()
-
-	maxTokens := c.cfg.MaxTokens
-	if maxTokens <= 0 {
-		maxTokens = 64
-	}
-
-	// Le classifieur doit produire du JSON strict, et sa temperature est nulle
-	// pour que deux requetes identiques donnent le meme verdict.
-	cfg.ResponseFormat = "json_object"
-	cfg.MaxTokens = &maxTokens
-	temp := 0.0
-	cfg.Temperature = &temp
-
 	if timeout := c.cfg.Timeout; timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, time.Duration(timeout))
 		defer cancel()
 	}
 
-	result, err := c.inner.Chat(ctx, cfg, []domain.ChatMessage{{Role: "system", Content: classifierSystemPrompt}, {Role: "user", Content: prompt}})
-	if err != nil {
-		return "", 0, fmt.Errorf("classifier call: %w", err)
-	}
-
-	tier, confidence, err := parseVerdict(result.Content)
+	result, err := c.call(ctx, prompt)
 	if err != nil {
 		return "", 0, err
 	}
-	return tier, confidence, nil
+	return parseVerdict(result.Content)
+}
+
+// call sends the classification prompt with the strict JSON settings the
+// verdict parser expects.
+func (c *LocalClassifier) call(ctx context.Context, prompt string) (domain.LLMResult, error) {
+	cfg := c.config()
+	maxTokens := c.cfg.MaxTokens
+	if maxTokens <= 0 {
+		maxTokens = 64
+	}
+	// Strict JSON and a zero temperature make identical requests produce the
+	// same verdict.
+	cfg.ResponseFormat = "json_object"
+	cfg.MaxTokens = &maxTokens
+	temp := 0.0
+	cfg.Temperature = &temp
+
+	messages := []domain.ChatMessage{
+		{Role: "system", Content: classifierSystemPrompt},
+		{Role: "user", Content: prompt},
+	}
+	result, err := c.inner.Chat(ctx, cfg, messages)
+	if err != nil {
+		return domain.LLMResult{}, fmt.Errorf("classifier call: %w", err)
+	}
+	return result, nil
 }
 
 // buildPrompt resume la conversation. L'historique est tronque par nombre de
@@ -106,12 +112,18 @@ func (c *LocalClassifier) buildPrompt(messages []domain.ChatMessage) (string, er
 		limit = 6000
 	}
 
-	var b strings.Builder
-	b.WriteString("Conversation a classer :\n\n")
+	selected, err := recentMessages(messages, limit)
+	if err != nil {
+		return "", err
+	}
+	return formatConversation(selected), nil
+}
 
+// recentMessages keeps the newest messages that fit the character budget,
+// walking backwards so the current request is always preferred, then restores
+// chronological order.
+func recentMessages(messages []domain.ChatMessage, limit int) ([]domain.ChatMessage, error) {
 	used := 0
-	// On parcourt a l'envers pour Privilegier la fin de la conversation, qui
-	// porte la demande courante, puis on restaure l'ordre chronologique.
 	selected := make([]domain.ChatMessage, 0, len(messages))
 	for i := len(messages) - 1; i >= 0; i-- {
 		content := strings.TrimSpace(messages[i].Content)
@@ -124,14 +136,19 @@ func (c *LocalClassifier) buildPrompt(messages []domain.ChatMessage) (string, er
 		used += len(content)
 		selected = append(selected, domain.ChatMessage{Role: messages[i].Role, Content: content})
 	}
+	if len(selected) == 0 {
+		return nil, fmt.Errorf("classifier: no usable message content")
+	}
 	for i, j := 0, len(selected)-1; i < j; i, j = i+1, j-1 {
 		selected[i], selected[j] = selected[j], selected[i]
 	}
-	if len(selected) == 0 {
-		return "", fmt.Errorf("classifier: no usable message content")
-	}
+	return selected, nil
+}
 
-	for _, m := range selected {
+func formatConversation(messages []domain.ChatMessage) string {
+	var b strings.Builder
+	b.WriteString("Conversation a classer :\n\n")
+	for _, m := range messages {
 		label := m.Role
 		if label == "" {
 			label = "user"
@@ -139,7 +156,7 @@ func (c *LocalClassifier) buildPrompt(messages []domain.ChatMessage) (string, er
 		b.WriteString("[" + label + "] " + m.Content + "\n\n")
 	}
 	b.WriteString("Quel tier pour cette conversation ?")
-	return b.String(), nil
+	return b.String()
 }
 
 // config fabrique une ChatConfig dediee au classifieur. Elle ne porte pas de

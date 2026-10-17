@@ -70,7 +70,10 @@ func TestEmbeddingUILocalRuntime(t *testing.T) {
 		),
 	)
 
-	server := NewServer(nil, configUC, modelUC, projectUC, keyUC, providerUC, catalogUC, embeddingUC, "http://localhost:11434")
+	server, err := NewServer(nil, configUC, modelUC, projectUC, keyUC, providerUC, catalogUC, embeddingUC, nil, "http://localhost:11434")
+	if err != nil {
+		t.Fatalf("new server: %v", err)
+	}
 	mux := http.NewServeMux()
 	server.Register(mux)
 

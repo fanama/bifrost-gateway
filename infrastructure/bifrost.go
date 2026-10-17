@@ -3,17 +3,23 @@ package infrastructure
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"strings"
 
+	"bridge-gateway/domain/llm"
 	bifrost "github.com/maximhq/bifrost/core"
 	"github.com/maximhq/bifrost/core/schemas"
 )
 
+// ProviderError is an alias to domain/llm.ProviderError so existing callers
+// and tests keep working while the error type lives in the domain layer.
+type ProviderError = llm.ProviderError
+
+// BifrostClient wraps the Bifrost SDK client for chat, streaming, and embeddings.
 type BifrostClient struct {
 	client *bifrost.Bifrost
 }
 
+// NewBifrostClient initializes a Bifrost SDK client for the given account.
 func NewBifrostClient(account schemas.Account) (*BifrostClient, error) {
 	client, err := bifrost.Init(context.Background(), schemas.BifrostConfig{
 		Account: account,
@@ -24,6 +30,7 @@ func NewBifrostClient(account schemas.Account) (*BifrostClient, error) {
 	return &BifrostClient{client: client}, nil
 }
 
+// ChatCompletion executes a synchronous chat completion call via Bifrost.
 func (c *BifrostClient) ChatCompletion(
 	ctx context.Context,
 	provider schemas.ModelProvider,
@@ -48,6 +55,7 @@ func (c *BifrostClient) ChatCompletion(
 	return resp, nil
 }
 
+// Embedding executes an embedding call via Bifrost.
 func (c *BifrostClient) Embedding(
 	ctx context.Context,
 	provider schemas.ModelProvider,
@@ -72,33 +80,6 @@ func (c *BifrostClient) Embedding(
 	return resp, nil
 }
 
-// ProviderError conserve les champs structurants d'un echec provider.
-//
-// L'adaptateur doit pouvoir decider si un echec merite une bascule vers un
-// autre modele, ce qui impose de lire le code HTTP et le code fournisseur sans
-// analyser une chaine. Le rendu textuel reste identique a celui historique pour
-// que les messages de l'UI ne changent pas.
-type ProviderError struct {
-	StatusCode int
-	Code       string
-	Message    string
-	Detail     string
-}
-
-func (e *ProviderError) Error() string {
-	if e.Detail != "" {
-		return fmt.Sprintf("bifrost error: %s: %s", e.Message, e.Detail)
-	}
-	if e.StatusCode != 0 {
-		return fmt.Sprintf("bifrost error: %s (HTTP %d)", e.Message, e.StatusCode)
-	}
-	return fmt.Sprintf("bifrost error: %s", e.Message)
-}
-
-// formatBifrostError renders a BifrostError into something actionable. The SDK
-// collapses a whole class of failures into a generic message ("HTML response
-// received from provider"), so the HTTP status and a short excerpt of the body
-// are kept to make misconfigured base URLs diagnosable from the UI.
 func formatBifrostError(bifrostErr *schemas.BifrostError) error {
 	msg := "unknown error"
 	if bifrostErr.Error != nil && bifrostErr.Error.Message != "" {
@@ -142,8 +123,6 @@ func rawResponseExcerpt(raw any) string {
 	}
 }
 
-// excerpt collapses whitespace and truncates s so a provider error page does not
-// flood the UI toast.
 func excerpt(s string, max int) string {
 	collapsed := strings.Join(strings.Fields(s), " ")
 	if max <= 0 || len(collapsed) <= max {
@@ -152,8 +131,7 @@ func excerpt(s string, max int) string {
 	return collapsed[:max] + "..."
 }
 
-// ChatCompletionStream ouvre un flux de fragments aupres du provider. Le canal
-// rendu est ferme par Bifrost en fin de flux, comme en cas d'erreur.
+// ChatCompletionStream opens a streaming chat completion channel via Bifrost.
 func (c *BifrostClient) ChatCompletionStream(
 	ctx context.Context,
 	provider schemas.ModelProvider,

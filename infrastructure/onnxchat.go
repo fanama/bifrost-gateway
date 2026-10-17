@@ -141,23 +141,38 @@ func (p *OnnxChatProvider) stateLocked(modelID string) (*onnxChatModel, error) {
 		}
 	}
 
-	if p.runtime == nil {
-		if _, err := os.Stat(p.opts.LibraryPath); err != nil {
-			return nil, fmt.Errorf("onnx runtime not configured: library not found at %q (set ONNX_RUNTIME_LIB)", p.opts.LibraryPath)
-		}
-		rt, err := onnxruntime.NewRuntime(p.opts.LibraryPath, onnxAPIVersion)
-		if err != nil {
-			return nil, fmt.Errorf("onnx runtime load failed: %w", err)
-		}
-		env, err := rt.NewEnv("chat", onnxruntime.LoggingLevelWarning)
-		if err != nil {
-			rt.Close()
-			return nil, fmt.Errorf("onnx env init failed: %w", err)
-		}
-		p.runtime = rt
-		p.env = env
+	if err := p.ensureRuntime(); err != nil {
+		return nil, err
 	}
+	st, err := p.openModel(base)
+	if err != nil {
+		return nil, err
+	}
+	p.models[id] = st
+	return st, nil
+}
 
+func (p *OnnxChatProvider) ensureRuntime() error {
+	if p.runtime != nil {
+		return nil
+	}
+	if _, err := os.Stat(p.opts.LibraryPath); err != nil {
+		return fmt.Errorf("onnx runtime not configured: library not found at %q (set ONNX_RUNTIME_LIB)", p.opts.LibraryPath)
+	}
+	rt, err := onnxruntime.NewRuntime(p.opts.LibraryPath, onnxAPIVersion)
+	if err != nil {
+		return fmt.Errorf("onnx runtime load failed: %w", err)
+	}
+	env, err := rt.NewEnv("chat", onnxruntime.LoggingLevelWarning)
+	if err != nil {
+		rt.Close()
+		return fmt.Errorf("onnx env init failed: %w", err)
+	}
+	p.runtime, p.env = rt, env
+	return nil
+}
+
+func (p *OnnxChatProvider) openModel(base string) (*onnxChatModel, error) {
 	sess, err := p.runtime.NewSession(p.env, filepath.Join(base, "model.onnx"), &onnxruntime.SessionOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("onnx chat session init failed: %w", err)
@@ -172,6 +187,5 @@ func (p *OnnxChatProvider) stateLocked(modelID string) (*onnxChatModel, error) {
 		sess.Close()
 		return nil, err
 	}
-	p.models[id] = st
 	return st, nil
 }

@@ -42,10 +42,19 @@ func newWordPieceTokenizer(path string, maxSeqLen int) (*wordPieceTokenizer, err
 	defer f.Close()
 
 	t := &wordPieceTokenizer{vocab: make(map[string]int32, 32*1024), maxSeqLen: maxSeqLen}
+	if err := t.loadVocab(f); err != nil {
+		return nil, err
+	}
+	if err := t.bindSpecialTokens(path); err != nil {
+		return nil, err
+	}
+	return t, nil
+}
+
+// loadVocab reads one token per line; the line number is the token ID. Long
+// lines are possible in exotic vocabularies, so the scanner buffer is raised.
+func (t *wordPieceTokenizer) loadVocab(f *os.File) error {
 	scanner := bufio.NewScanner(f)
-	// Certains vocabulaires ont des lignes longues (pieces de texte) : le
-	// buffer par defaut de bufio (64 Ko) est largement suffisant, mais on le
-	// leve pour rester robuste a un vocabulaire exotique.
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 	idx := int32(0)
 	for scanner.Scan() {
@@ -56,9 +65,14 @@ func newWordPieceTokenizer(path string, maxSeqLen int) (*wordPieceTokenizer, err
 		idx++
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("read vocab: %w", err)
+		return fmt.Errorf("read vocab: %w", err)
 	}
+	return nil
+}
 
+// bindSpecialTokens resolves the four mandatory BERT special tokens. Failing
+// loudly is safer than silently producing a wrong encoding.
+func (t *wordPieceTokenizer) bindSpecialTokens(path string) error {
 	for name, target := range map[string]*int32{
 		"[PAD]": &t.padID,
 		"[UNK]": &t.unkID,
@@ -67,11 +81,11 @@ func newWordPieceTokenizer(path string, maxSeqLen int) (*wordPieceTokenizer, err
 	} {
 		id, ok := t.vocab[name]
 		if !ok {
-			return nil, fmt.Errorf("vocab %q missing required token %q", path, name)
+			return fmt.Errorf("vocab %q missing required token %q", path, name)
 		}
 		*target = id
 	}
-	return t, nil
+	return nil
 }
 
 // encode transforme un texte en triplets (ids, attention mask, token types)

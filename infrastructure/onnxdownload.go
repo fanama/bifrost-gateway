@@ -77,35 +77,38 @@ func downloadArchiveMember(ctx context.Context, client *http.Client, a onnxAsset
 	tmpName := tmp.Name()
 	defer os.Remove(tmpName) // sans effet apres reussite : la copie est faite
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, a.url, nil)
-	if err != nil {
+	if err := fetchURLToFile(ctx, client, a.url, tmp); err != nil {
 		tmp.Close()
-		return err //nolint:wrapcheck
+		return err
 	}
-	resp, err := client.Do(req)
-	if err != nil {
-		tmp.Close()
-		return err //nolint:wrapcheck
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		tmp.Close()
-		return fmt.Errorf("HTTP %d", resp.StatusCode)
-	}
-	if _, err := io.Copy(tmp, resp.Body); err != nil {
-		tmp.Close()
-		return err //nolint:wrapcheck
-	}
-	if _, err := tmp.Seek(0, io.SeekStart); err != nil {
-		tmp.Close()
-		return err //nolint:wrapcheck
-	}
-
 	extractErr := extractArchiveMember(tmp, strings.TrimSuffix(path.Base(a.url), ".tgz")+"|"+a.member, dest)
 	if cerr := tmp.Close(); cerr != nil && extractErr == nil {
 		extractErr = cerr
 	}
 	return extractErr
+}
+
+// fetchURLToFile streams url into dst and rewinds it for extraction.
+func fetchURLToFile(ctx context.Context, client *http.Client, url string, dst *os.File) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return err //nolint:wrapcheck
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err //nolint:wrapcheck
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	if _, err := io.Copy(dst, resp.Body); err != nil {
+		return err //nolint:wrapcheck
+	}
+	if _, err := dst.Seek(0, io.SeekStart); err != nil {
+		return err //nolint:wrapcheck
+	}
+	return nil
 }
 
 // extractArchiveMember choisit tar.gz ou zip d'apres l'extension de l'URL

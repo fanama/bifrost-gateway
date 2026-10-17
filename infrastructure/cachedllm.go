@@ -146,18 +146,33 @@ func (p *CachedLLMProvider) ChatStream(ctx context.Context, cfg *domain.ChatConf
 		return domain.StreamFrom(ctx, p.inner, cfg, messages)
 	}
 
-	if raw, ok := p.cache.Get(key); ok {
-		var cached domain.LLMResult
-		if err := json.Unmarshal(raw, &cached); err == nil {
-			return domain.StreamViaFallback(cached, nil)
-		}
+	if cached, ok := p.cachedStream(key); ok {
+		return domain.StreamViaFallback(cached, nil)
 	}
 
 	source, err := domain.StreamFrom(ctx, p.inner, cfg, messages)
 	if err != nil {
 		return nil, err
 	}
+	return p.streamAndStore(ctx, source, key), nil
+}
 
+// cachedStream returns a complete cached answer, if one can be decoded.
+func (p *CachedLLMProvider) cachedStream(key string) (domain.LLMResult, bool) {
+	raw, ok := p.cache.Get(key)
+	if !ok {
+		return domain.LLMResult{}, false
+	}
+	var cached domain.LLMResult
+	if err := json.Unmarshal(raw, &cached); err != nil {
+		return domain.LLMResult{}, false
+	}
+	return cached, true
+}
+
+// streamAndStore forwards a live stream and stores the answer only once it is
+// complete. A client disconnect or mid-stream error leaves the cache untouched.
+func (p *CachedLLMProvider) streamAndStore(ctx context.Context, source <-chan domain.StreamEvent, key string) <-chan domain.StreamEvent {
 	out := make(chan domain.StreamEvent)
 	go func() {
 		defer close(out)
@@ -166,43 +181,46 @@ func (p *CachedLLMProvider) ChatStream(ctx context.Context, cfg *domain.ChatConf
 		for {
 			select {
 			case <-ctx.Done():
-				// Abandon du client : rien n'est memorise, une entree partielle
-				// serait servie a une requete ulterieure comme une reponse
-				// complete alors qu'elle est tronquee.
 				return
 			case event, ok := <-source:
 				if !ok {
 					return
 				}
 				if event.Err != nil {
-					// Reponse incomplete : elle ne doit jamais etre memorisee.
-					select {
-					case out <- event:
-					case <-ctx.Done():
-					}
+					sendStreamEvent(ctx, out, event)
 					return
 				}
 				assembled.WriteString(event.Delta)
-
-				select {
-				case out <- event:
-				case <-ctx.Done():
+				if !sendStreamEvent(ctx, out, event) {
 					return
 				}
-
 				if event.Done {
-					// La reponse est complete : elle seule merite d'etre memorisee.
-					entry := domain.LLMResult{Content: assembled.String(), Model: event.Model}
-					if raw, err := json.Marshal(entry); err == nil {
-						p.cache.Set(key, raw, time.Duration(p.ttl)*time.Second)
-					}
+					p.storeResult(key, assembled.String(), event.Model)
 					return
 				}
 			}
 		}
 	}()
+	return out
+}
 
-	return out, nil
+func (p *CachedLLMProvider) storeResult(key, content, model string) {
+	entry := domain.LLMResult{Content: content, Model: model}
+	raw, err := json.Marshal(entry)
+	if err != nil {
+		return
+	}
+	p.cache.Set(key, raw, time.Duration(p.ttl)*time.Second)
+}
+
+// sendStreamEvent delivers an event unless the caller has gone away.
+func sendStreamEvent(ctx context.Context, out chan<- domain.StreamEvent, event domain.StreamEvent) bool {
+	select {
+	case out <- event:
+		return true
+	case <-ctx.Done():
+		return false
+	}
 }
 
 var _ domain.StreamingLLMProvider = (*CachedLLMProvider)(nil)

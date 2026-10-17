@@ -149,33 +149,47 @@ func ensureOnnxAssets(ctx context.Context, root string, assets []onnxAsset, clie
 		if present {
 			continue
 		}
-		logf("telechargement de %s (%s)", a.dest, a.url)
-		start := time.Now()
-		if a.member != "" {
-			err = downloadArchiveMember(ctx, client, a, dest, filepath.Dir(dest))
-		} else {
-			err = downloadFile(ctx, client, a, dest)
+		if err := downloadAsset(ctx, client, a, dest, logf); err != nil {
+			errs = append(errs, err)
 		}
-		if err != nil {
-			logf("echec de %s: %v", a.dest, err)
-			errs = append(errs, fmt.Errorf("%s: %w", a.dest, err))
-			continue
-		}
-		logf("%s pret (%.1f Mo, %s)", a.dest, float64(sizeOf(dest))/(1<<20), time.Since(start).Round(time.Millisecond))
 	}
+	return errors.Join(ensureParaphraseVocab(root, errs)...)
+}
 
-	// Le vocabulaire BERT des MiniLM est identique : le modele discover
-	// reutilise celui du modele par defaut, comme documente dans le README.
+// downloadAsset fetches one missing artifact, logging progress and failures.
+func downloadAsset(ctx context.Context, client *http.Client, a onnxAsset, dest string, logf func(string, ...any)) error {
+	logf("telechargement de %s (%s)", a.dest, a.url)
+	start := time.Now()
+	var err error
+	if a.member != "" {
+		err = downloadArchiveMember(ctx, client, a, dest, filepath.Dir(dest))
+	} else {
+		err = downloadFile(ctx, client, a, dest)
+	}
+	if err != nil {
+		logf("echec de %s: %v", a.dest, err)
+		return fmt.Errorf("%s: %w", a.dest, err)
+	}
+	logf("%s pret (%.1f Mo, %s)", a.dest, float64(sizeOf(dest))/(1<<20), time.Since(start).Round(time.Millisecond))
+	return nil
+}
+
+// ensureParaphraseVocab reuses the default MiniLM vocabulary for the discover
+// model; both BERT vocabularies are identical.
+func ensureParaphraseVocab(root string, errs []error) []error {
 	src := filepath.Join(root, "vocab.txt")
 	dst := filepath.Join(root, "paraphrase-MiniLM-L3-v2", "vocab.txt")
-	if fi, serr := os.Stat(dst); serr != nil || fi.Size() == 0 {
-		if data, rerr := os.ReadFile(src); rerr == nil {
-			if werr := writeFileAtomic(dst, data); werr != nil {
-				errs = append(errs, werr)
-			}
-		}
+	if fi, err := os.Stat(dst); err == nil && fi.Size() > 0 {
+		return errs
 	}
-	return errors.Join(errs...)
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return errs
+	}
+	if err := writeFileAtomic(dst, data); err != nil {
+		return append(errs, err)
+	}
+	return errs
 }
 
 // assetPresent : le fichier existe et pese au moins min (0 = presence seule).

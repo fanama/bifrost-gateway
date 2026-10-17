@@ -64,56 +64,49 @@ func ToModelProvider(s string) (schemas.ModelProvider, error) {
 	if v == "" {
 		return schemas.OpenAI, nil
 	}
-	switch v {
-	case "ollama":
-		return schemas.Ollama, nil
-	case "openai", "openai-compatible", "custom", "generic", "proxy":
-		return schemas.OpenAI, nil
-	case "azure":
-		return schemas.Azure, nil
-	case "vertex", "vertexai":
-		return schemas.Vertex, nil
-	case "google", "gemini":
-		return schemas.Gemini, nil
-	case "mistral", "mistralai":
-		return schemas.Mistral, nil
-	case "anthropic", "claude":
-		return schemas.Anthropic, nil
-	case "groq":
-		return schemas.Groq, nil
-	case "cohere":
-		return schemas.Cohere, nil
-	case "bedrock", "aws":
-		return schemas.Bedrock, nil
-	case "openrouter":
-		return schemas.OpenRouter, nil
-	case "perplexity":
-		return schemas.Perplexity, nil
-	case "cerebras":
-		return schemas.Cerebras, nil
-	case "xai", "grok":
-		return schemas.XAI, nil
-	case "replicate":
-		return schemas.Replicate, nil
-	case "nebius":
-		return schemas.Nebius, nil
-	case "elevenlabs":
-		return schemas.Elevenlabs, nil
-	case "huggingface":
-		return schemas.HuggingFace, nil
-	case "sgl":
-		return schemas.SGL, nil
-	case "parasail":
-		return schemas.Parasail, nil
-	case "vllm":
-		return schemas.VLLM, nil
-	case "runway":
-		return schemas.Runway, nil
-	default:
-		// Any other custom provider (e.g. private gateway, vLLM, custom proxy)
-		// falls back to the standard OpenAI-compatible protocol with its custom BaseURL.
-		return schemas.OpenAI, nil
+	if provider, ok := modelProviderAliases[v]; ok {
+		return provider, nil
 	}
+	// Any other custom provider (private gateway, vLLM, custom proxy) falls
+	// back to the standard OpenAI-compatible protocol with its custom BaseURL.
+	return schemas.OpenAI, nil
+}
+
+// modelProviderAliases maps configuration/UI provider names to the Bifrost SDK
+// enum. OpenAI-compatible aliases are explicit so they stay documented.
+var modelProviderAliases = map[string]schemas.ModelProvider{
+	"ollama":            schemas.Ollama,
+	"openai":            schemas.OpenAI,
+	"openai-compatible": schemas.OpenAI,
+	"custom":            schemas.OpenAI,
+	"generic":           schemas.OpenAI,
+	"proxy":             schemas.OpenAI,
+	"azure":             schemas.Azure,
+	"vertex":            schemas.Vertex,
+	"vertexai":          schemas.Vertex,
+	"google":            schemas.Gemini,
+	"gemini":            schemas.Gemini,
+	"mistral":           schemas.Mistral,
+	"mistralai":         schemas.Mistral,
+	"anthropic":         schemas.Anthropic,
+	"claude":            schemas.Anthropic,
+	"groq":              schemas.Groq,
+	"cohere":            schemas.Cohere,
+	"bedrock":           schemas.Bedrock,
+	"aws":               schemas.Bedrock,
+	"openrouter":        schemas.OpenRouter,
+	"perplexity":        schemas.Perplexity,
+	"cerebras":          schemas.Cerebras,
+	"xai":               schemas.XAI,
+	"grok":              schemas.XAI,
+	"replicate":         schemas.Replicate,
+	"nebius":            schemas.Nebius,
+	"elevenlabs":        schemas.Elevenlabs,
+	"huggingface":       schemas.HuggingFace,
+	"sgl":               schemas.SGL,
+	"parasail":          schemas.Parasail,
+	"vllm":              schemas.VLLM,
+	"runway":            schemas.Runway,
 }
 
 func defaultBaseURLFor(p schemas.ModelProvider) string {

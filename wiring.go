@@ -70,33 +70,53 @@ func buildLLMProvider(
 	configStore domain.ChatConfigRepository,
 	providerStore domain.ProviderRepository,
 	llmCache domain.Cache,
+	metrics *infrastructure.MetricsCollector,
 ) domain.LLMProvider {
 	var llm domain.LLMProvider = infrastructure.NewOnnxChatRouter(onnxChatProvider, bifrostProvider).WithCatalog(catalogStore)
-
 	if cfg.Routing.Enabled {
-		// Quand le routeur escalade vers un autre tier, il change de provider :
-		// les reessais internes de Bifrost feraient doublonner le travail de
-		// l'echelle de bascule.
-		bifrostProvider.SetMaxRetries(cfg.Routing.MaxRetries)
-
-		classifier := infrastructure.NewLocalClassifier(bifrostProvider, cfg.Routing.Classifier)
-		llm = infrastructure.NewRoutingLLMProvider(
-			bifrostProvider,
-			classifier,
-			configStore,
-			providerStore,
-			infrastructure.RoutingOptions{
-				MinConfidence: cfg.Routing.NormalizedMinConfidence(0.6),
-				Cooldown:      cfg.Routing.CooldownTTL(60 * time.Second),
-				MaxAttempts:   cfg.Routing.MaxAttempts,
-			},
-		)
-		log.Printf("Routing enabled: tiers=%s, min_confidence=%.2f, cooldown=%s",
-			strings.Join(domain.TierOptions(), ">"),
-			cfg.Routing.NormalizedMinConfidence(0.6),
-			cfg.Routing.CooldownTTL(60*time.Second))
+		llm = newRoutingProvider(cfg, bifrostProvider, configStore, providerStore)
 	}
+	return withLLMDecorators(cfg, llm, llmCache, metrics)
+}
 
+// newRoutingProvider builds the tier router. When it escalates it changes
+// provider, so Bifrost's internal retries are disabled to avoid duplicating the
+// failover ladder's work.
+func newRoutingProvider(
+	cfg *infrastructure.GatewayConfig,
+	bifrostProvider *infrastructure.BifrostLLMProvider,
+	configStore domain.ChatConfigRepository,
+	providerStore domain.ProviderRepository,
+) domain.LLMProvider {
+	bifrostProvider.SetMaxRetries(cfg.Routing.MaxRetries)
+	classifier := infrastructure.NewLocalClassifier(bifrostProvider, cfg.Routing.Classifier)
+	router := infrastructure.NewRoutingLLMProvider(
+		bifrostProvider, classifier, configStore, providerStore,
+		infrastructure.RoutingOptions{
+			MinConfidence: cfg.Routing.NormalizedMinConfidence(0.6),
+			Cooldown:      cfg.Routing.CooldownTTL(60 * time.Second),
+			MaxAttempts:   cfg.Routing.MaxAttempts,
+		},
+	)
+	log.Printf("Routing enabled: tiers=%s, min_confidence=%.2f, cooldown=%s",
+		strings.Join(domain.TierOptions(), ">"),
+		cfg.Routing.NormalizedMinConfidence(0.6),
+		cfg.Routing.CooldownTTL(60*time.Second))
+	return router
+}
+
+// withLLMDecorators wraps the provider with metrics and the response cache.
+// Metrics sit below the cache: a cache hit is not a provider call and must not
+// inflate latency or error counters.
+func withLLMDecorators(
+	cfg *infrastructure.GatewayConfig,
+	llm domain.LLMProvider,
+	llmCache domain.Cache,
+	metrics *infrastructure.MetricsCollector,
+) domain.LLMProvider {
+	if metrics != nil {
+		llm = infrastructure.NewMeasuredLLMProvider(llm, metrics)
+	}
 	if cfg.Cache.LLMResponse.Enabled {
 		llm = infrastructure.NewCachedLLMProvider(llm, llmCache, cfg.Cache.LLMResponse.CacheTTL(5*time.Minute))
 	}

@@ -135,63 +135,58 @@ func (p *BifrostLLMProvider) ChatStream(ctx context.Context, cfg *domain.ChatCon
 		return nil, err
 	}
 
+	return pumpBifrostStream(ctx, source, cfg.Model), nil
+}
+
+// pumpBifrostStream converts Bifrost chunks into domain events. A mid-stream
+// error can no longer become an HTTP error, so it is forwarded as an SSE frame.
+func pumpBifrostStream(ctx context.Context, source <-chan *schemas.BifrostStreamChunk, model string) <-chan domain.StreamEvent {
 	out := make(chan domain.StreamEvent)
 	go func() {
 		defer close(out)
-
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case chunk, ok := <-source:
 				if !ok {
-					// Le provider a fini : on termine le flux.
-					select {
-					case out <- domain.StreamEvent{Model: cfg.Model, Done: true}:
-					case <-ctx.Done():
-					}
+					sendStreamEvent(ctx, out, domain.StreamEvent{Model: model, Done: true})
 					return
 				}
-
-				if streamErr := streamChunkError(chunk); streamErr != nil {
-					// Une erreur de milieu de flux ne peut plus etre convertie en
-					// reponse HTTP : la seule chose qui reste correcte est de
-					// l'annoncer au client sous forme de trame SSE.
-					select {
-					case out <- domain.StreamEvent{Err: streamErr}:
-					case <-ctx.Done():
-					}
-					return
-				}
-
-				delta, role, ok := streamChunkDelta(chunk)
+				event, ok := eventFromChunk(chunk, model)
 				if !ok {
 					continue
 				}
-				select {
-				case out <- domain.StreamEvent{Delta: delta, Role: role, Model: cfg.Model}:
-				case <-ctx.Done():
+				if !sendStreamEvent(ctx, out, event) {
+					return
+				}
+				if event.Err != nil {
 					return
 				}
 			}
 		}
 	}()
+	return out
+}
 
-	return out, nil
+// eventFromChunk converts one chunk; ok is false when it carries no delta.
+func eventFromChunk(chunk *schemas.BifrostStreamChunk, model string) (domain.StreamEvent, bool) {
+	if err := streamChunkError(chunk); err != nil {
+		return domain.StreamEvent{Err: err}, true
+	}
+	delta, role, ok := streamChunkDelta(chunk)
+	if !ok {
+		return domain.StreamEvent{}, false
+	}
+	return domain.StreamEvent{Delta: delta, Role: role, Model: model}, true
 }
 
 var _ domain.EmbeddingProvider = (*BifrostLLMProvider)(nil)
 
 func (p *BifrostLLMProvider) Embed(ctx context.Context, cfg *domain.ChatConfig, req *domain.EmbeddingRequest) (*domain.EmbeddingResponse, error) {
-	if req == nil || len(req.Input) == 0 {
-		return nil, &domain.InvalidRequestError{Param: "input", Reason: "input is required"}
-	}
-	var input schemas.EmbeddingInput
-	if err := json.Unmarshal(req.Input, &input); err != nil {
-		return nil, &domain.InvalidRequestError{Param: "input", Reason: "invalid input format: " + err.Error()}
-	}
-	if input.Text == nil && len(input.Texts) == 0 && len(input.Embedding) == 0 && len(input.Embeddings) == 0 {
-		return nil, &domain.InvalidRequestError{Param: "input", Reason: "input is required"}
+	input, err := bifrostEmbeddingInput(req)
+	if err != nil {
+		return nil, err
 	}
 
 	provider, err := ToModelProvider(cfg.Provider)
@@ -223,4 +218,19 @@ func (p *BifrostLLMProvider) Embed(ctx context.Context, cfg *domain.ChatConfig, 
 	}
 
 	return toDomainEmbeddingResponse(resp, model), nil
+}
+
+// bifrostEmbeddingInput validates and decodes the raw embedding input payload.
+func bifrostEmbeddingInput(req *domain.EmbeddingRequest) (schemas.EmbeddingInput, error) {
+	if req == nil || len(req.Input) == 0 {
+		return schemas.EmbeddingInput{}, &domain.InvalidRequestError{Param: "input", Reason: "input is required"}
+	}
+	var input schemas.EmbeddingInput
+	if err := json.Unmarshal(req.Input, &input); err != nil {
+		return schemas.EmbeddingInput{}, &domain.InvalidRequestError{Param: "input", Reason: "invalid input format: " + err.Error()}
+	}
+	if input.Text == nil && len(input.Texts) == 0 && len(input.Embedding) == 0 && len(input.Embeddings) == 0 {
+		return schemas.EmbeddingInput{}, &domain.InvalidRequestError{Param: "input", Reason: "input is required"}
+	}
+	return input, nil
 }

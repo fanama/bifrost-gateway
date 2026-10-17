@@ -4,6 +4,7 @@ import (
 	"context"
 	"embed"
 	"errors"
+	"fmt"
 	"html/template"
 	"log"
 	"net/http"
@@ -38,6 +39,7 @@ type Server struct {
 	providers  providersController
 	models     modelsController
 	projects   projectsController
+	monitoring monitoringController
 }
 
 func NewServer(
@@ -49,9 +51,27 @@ func NewServer(
 	providers providerService,
 	catalog catalogService,
 	embeddings embeddingService,
+	metrics metricsService,
 	ollamaBase string,
-) *Server {
-	funcs := template.FuncMap{
+) (*Server, error) {
+	tmpl, err := template.New("").Funcs(templateFuncs()).ParseFS(files, "templates/*.html")
+	if err != nil {
+		return nil, fmt.Errorf("parse templates: %w", err)
+	}
+	shared := uiShared{templates: tmpl, providers: providers, models: models, ollamaBase: ollamaBase}
+	return &Server{
+		chat:       chatController{uiShared: shared, chat: chat, configs: configs},
+		embeddings: embeddingsController{uiShared: shared, embeddings: embeddings},
+		providers:  providersController{uiShared: shared},
+		models:     modelsController{uiShared: shared, catalog: catalog},
+		projects:   projectsController{uiShared: shared, projects: projects, configs: configs, keys: keys},
+		monitoring: monitoringController{uiShared: shared, metrics: metrics},
+	}, nil
+}
+
+// templateFuncs exposes the formatting helpers used by the templates.
+func templateFuncs() template.FuncMap {
+	return template.FuncMap{
 		"f": func(p *float64) string {
 			if p == nil {
 				return ""
@@ -64,18 +84,9 @@ func NewServer(
 			}
 			return strconv.Itoa(*p)
 		},
-	}
-	tmpl, err := template.New("").Funcs(funcs).ParseFS(files, "templates/*.html")
-	if err != nil {
-		log.Fatalf("parse templates: %v", err)
-	}
-	shared := uiShared{templates: tmpl, providers: providers, models: models, ollamaBase: ollamaBase}
-	return &Server{
-		chat:       chatController{uiShared: shared, chat: chat, configs: configs},
-		embeddings: embeddingsController{uiShared: shared, embeddings: embeddings},
-		providers:  providersController{uiShared: shared},
-		models:     modelsController{uiShared: shared, catalog: catalog},
-		projects:   projectsController{uiShared: shared, projects: projects, configs: configs, keys: keys},
+		"dur":  formatDuration,
+		"ago":  formatAgo,
+		"barh": barHeight,
 	}
 }
 
@@ -89,6 +100,10 @@ func (s *Server) Register(mux *http.ServeMux) {
 
 	mux.HandleFunc("GET /embeddings-test", s.embeddings.pageEmbeddings)
 	mux.HandleFunc("POST /embeddings-test/compute", s.embeddings.computeEmbeddings)
+
+	mux.HandleFunc("GET /monitoring", s.monitoring.pageMonitoring)
+	mux.HandleFunc("GET /monitoring/stats", s.monitoring.stats)
+	mux.HandleFunc("GET /monitoring/metrics.json", s.monitoring.metricsJSON)
 
 	mux.HandleFunc("GET /models", s.models.pageModels)
 	mux.HandleFunc("POST /models", s.models.createModel)

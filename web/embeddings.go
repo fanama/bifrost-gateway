@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -12,18 +13,18 @@ import (
 	"bridge-gateway/domain"
 )
 
-// embeddingsController regroupe le testeur d'embeddings : choix des moteurs,
-// calcul et rendu des vecteurs, similarite cosinus.
+// embeddingsController groups the embeddings tester: engine selection, vector
+// computation, and cosine similarity rendering.
 type embeddingsController struct {
 	uiShared
 	embeddings embeddingService
 }
 
-// pageEmbeddings rend le testeur. La page expose la liste curatee des
-// modeles d'embedding (domain.EmbeddingChoices) completee par les modeles du
-// catalogue declares de type embedding : c'est le moteur selectionne ici qui
-// compte, jamais la configuration du projet. L'exemple cURL part du modele
-// par defaut et suit la selection via updateCurlSnippet.
+// pageEmbeddings renders the tester. The page exposes the curated embedding
+// model list (domain.EmbeddingChoices) completed by catalog models declared as
+// embeddings: the engine selected here is what counts, never the project
+// configuration. The cURL sample starts from the default model and follows the
+// selection through updateCurlSnippet.
 func (s *embeddingsController) pageEmbeddings(w http.ResponseWriter, r *http.Request) {
 	baseURL := chatAPIBaseURL(r)
 	if baseURL == "" {
@@ -55,91 +56,113 @@ func (s *embeddingsController) computeEmbeddings(w http.ResponseWriter, r *http.
 		return
 	}
 
-	modelID := strings.TrimSpace(r.FormValue("embed_model"))
-	if modelID == "" {
-		modelID = domain.ModelLocalEmbedding
+	choice, msg := s.resolveEmbeddingChoice(r.Context(), r.FormValue("embed_model"))
+	if msg != "" {
+		s.renderToast(w, "#embed-error", msg)
+		return
 	}
-	choice, err := s.findEmbeddingChoice(r.Context(), modelID)
+
+	inputs, mode, dims, msg := parseEmbeddingInput(r)
+	if msg != "" {
+		s.renderToast(w, "#embed-error", msg)
+		return
+	}
+	req, err := newEmbeddingRequest(inputs, dims)
 	if err != nil {
 		s.renderToast(w, "#embed-error", err.Error())
 		return
 	}
-	if choice == nil {
-		s.renderToast(w, "#embed-error", "modèle d'embedding inconnu : "+modelID)
+
+	resp, latency, msg := s.runEmbedding(r.Context(), choice, req)
+	if msg != "" {
+		s.renderToast(w, "#embed-error", msg)
 		return
 	}
+	s.renderEmbeddingResult(w, resp, inputs, mode, latency)
+}
 
-	mode := strings.TrimSpace(r.FormValue("mode"))
-	var dims *int
+// runEmbedding calls the selected engine. The tester ignores the project
+// configuration and derives the engine from the chosen model (local, ONNX,
+// Ollama); a provider failure propagates as-is, with no silent fallback.
+func (s *embeddingsController) runEmbedding(ctx context.Context, choice *domain.EmbeddingChoice, req *domain.EmbeddingRequest) (*domain.EmbeddingResponse, int64, string) {
+	cfg := &domain.ChatConfig{
+		Name:     "Testeur d'embeddings",
+		Provider: choice.Provider,
+		Model:    choice.Model,
+	}
+	start := time.Now()
+	resp, err := s.embeddings.EmbedWithConfig(ctx, cfg, req)
+	if err != nil {
+		return nil, 0, err.Error()
+	}
+	if len(resp.Data) == 0 {
+		return nil, 0, "aucun vecteur renvoyé par le modèle"
+	}
+	return resp, time.Since(start).Milliseconds(), ""
+}
+
+// resolveEmbeddingChoice validates the selected model against the curated list
+// and catalog. It returns a user-facing message on failure.
+func (s *embeddingsController) resolveEmbeddingChoice(ctx context.Context, raw string) (*domain.EmbeddingChoice, string) {
+	modelID := strings.TrimSpace(raw)
+	if modelID == "" {
+		modelID = domain.ModelLocalEmbedding
+	}
+	choice, err := s.findEmbeddingChoice(ctx, modelID)
+	if err != nil {
+		return nil, err.Error()
+	}
+	if choice == nil {
+		return nil, "modèle d'embedding inconnu : " + modelID
+	}
+	return choice, ""
+}
+
+// parseEmbeddingInput reads the text(s), comparison mode, and optional
+// dimensions from the submitted form.
+func parseEmbeddingInput(r *http.Request) (inputs []string, mode string, dims *int, msg string) {
+	mode = strings.TrimSpace(r.FormValue("mode"))
 	if dStr := strings.TrimSpace(r.FormValue("dimensions")); dStr != "" {
 		if d, err := strconv.Atoi(dStr); err == nil && d > 0 {
 			dims = &d
 		}
 	}
-
-	var inputs []string
 	if mode == "compare" {
-		txtA := strings.TrimSpace(r.FormValue("input_text_a"))
-		txtB := strings.TrimSpace(r.FormValue("input_text_b"))
-		if txtA == "" || txtB == "" {
-			s.renderToast(w, "#embed-error", "les deux textes sont requis pour la comparaison")
-			return
+		a := strings.TrimSpace(r.FormValue("input_text_a"))
+		b := strings.TrimSpace(r.FormValue("input_text_b"))
+		if a == "" || b == "" {
+			return nil, mode, dims, "les deux textes sont requis pour la comparaison"
 		}
-		inputs = []string{txtA, txtB}
-	} else {
-		txt := strings.TrimSpace(r.FormValue("input_text"))
-		if txt == "" {
-			s.renderToast(w, "#embed-error", "le texte à encoder est requis")
-			return
-		}
-		inputs = []string{txt}
+		return []string{a, b}, mode, dims, ""
 	}
+	text := strings.TrimSpace(r.FormValue("input_text"))
+	if text == "" {
+		return nil, mode, dims, "le texte à encoder est requis"
+	}
+	return []string{text}, mode, dims, ""
+}
 
-	var rawInput []byte
+// newEmbeddingRequest encodes a single text as a JSON string and several texts
+// as a JSON array, matching the OpenAI embeddings payload.
+func newEmbeddingRequest(inputs []string, dims *int) (*domain.EmbeddingRequest, error) {
+	var raw []byte
+	var err error
 	if len(inputs) == 1 {
-		rawInput, err = json.Marshal(inputs[0])
+		raw, err = json.Marshal(inputs[0])
 	} else {
-		rawInput, err = json.Marshal(inputs)
+		raw, err = json.Marshal(inputs)
 	}
 	if err != nil {
-		s.renderToast(w, "#embed-error", err.Error())
-		return
+		return nil, err
 	}
+	return &domain.EmbeddingRequest{Input: raw, Dimensions: dims}, nil
+}
 
-	req := &domain.EmbeddingRequest{
-		Input:      rawInput,
-		Dimensions: dims,
-	}
-
-	// Le testeur ne choisit que dans la liste curatee ou le catalogue
-	// (modeles type embedding) : la configuration du projet est ignoree, le
-	// moteur derive du modele selectionne (local, ONNX, Ollama). Un echec de
-	// moteur remonte tel quel, sans repli silencieux vers un autre provider.
-	selectedCfg := &domain.ChatConfig{
-		Name:     "Testeur d'embeddings",
-		Provider: choice.Provider,
-		Model:    choice.Model,
-	}
-
-	start := time.Now()
-	resp, err := s.embeddings.EmbedWithConfig(r.Context(), selectedCfg, req)
-	if err != nil {
-		s.renderToast(w, "#embed-error", err.Error())
-		return
-	}
-	latency := time.Since(start).Milliseconds()
-
-	if len(resp.Data) == 0 {
-		s.renderToast(w, "#embed-error", "aucun vecteur renvoyé par le modèle")
-		return
-	}
-
-	items := buildEmbedResultItems(resp.Data, inputs)
-
+// renderEmbeddingResult renders vectors and, in comparison mode, the cosine
+// similarity between the first two embeddings.
+func (s *embeddingsController) renderEmbeddingResult(w http.ResponseWriter, resp *domain.EmbeddingResponse, inputs []string, mode string, latency int64) {
 	hasSim := false
-	var sim float64
-	var simPct float64
-	var simBarWidth float64
+	var sim, simPct, simBarWidth float64
 	if mode == "compare" && len(resp.Data) >= 2 {
 		hasSim = true
 		sim = cosineSimilarity(resp.Data[0].Embedding, resp.Data[1].Embedding)
@@ -153,7 +176,7 @@ func (s *embeddingsController) computeEmbeddings(w http.ResponseWriter, r *http.
 		"Dimensions":         len(resp.Data[0].Embedding),
 		"Usage":              resp.Usage,
 		"LatencyMS":          latency,
-		"Items":              items,
+		"Items":              buildEmbedResultItems(resp.Data, inputs),
 		"HasSimilarity":      hasSim,
 		"Similarity":         sim,
 		"SimilarityPercent":  simPct,

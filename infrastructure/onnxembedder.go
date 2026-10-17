@@ -80,13 +80,7 @@ func (e *OnnxEmbedder) Embed(ctx context.Context, cfg *domain.ChatConfig, req *d
 		return nil, err
 	}
 
-	model := domain.ModelOnnxMiniLM
-	if cfg != nil && strings.TrimSpace(cfg.Model) != "" {
-		model = cfg.Model
-	}
-	if strings.TrimSpace(req.Model) != "" {
-		model = req.Model
-	}
+	model := onnxEmbeddingModel(cfg, req)
 
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -99,39 +93,58 @@ func (e *OnnxEmbedder) Embed(ctx context.Context, cfg *domain.ChatConfig, req *d
 	if err != nil {
 		return nil, err
 	}
-
-	// Le modele produit une dimension fixe : demander plus est une erreur
-	// explicite (pas de padding invente), demander moins tronque puis
-	// renormalise, comme l'accepte l'API OpenAI.
-	dims := len(vectors[0])
-	if req.Dimensions != nil && *req.Dimensions > 0 {
-		want := *req.Dimensions
-		if want > dims {
-			return nil, &domain.InvalidRequestError{
-				Param:  "dimensions",
-				Reason: fmt.Sprintf("model %s produces %d dimensions, cannot expand to %d", model, dims, want),
-			}
-		}
-		for i := range vectors {
-			vectors[i] = vectors[i][:want]
-			l2Normalize(vectors[i])
-		}
+	if err := applyDimensions(vectors, req.Dimensions, model); err != nil {
+		return nil, err
 	}
 
+	data, tokens := embeddingItems(vectors, texts, encoding)
+	return &domain.EmbeddingResponse{
+		Object: "list",
+		Data:   data,
+		Model:  model,
+		Usage:  domain.EmbeddingUsage{PromptTokens: tokens, TotalTokens: tokens},
+	}, nil
+}
+
+func onnxEmbeddingModel(cfg *domain.ChatConfig, req *domain.EmbeddingRequest) string {
+	model := domain.ModelOnnxMiniLM
+	if cfg != nil && strings.TrimSpace(cfg.Model) != "" {
+		model = cfg.Model
+	}
+	if strings.TrimSpace(req.Model) != "" {
+		model = req.Model
+	}
+	return model
+}
+
+// applyDimensions enforces the model's fixed width: asking for more is an
+// explicit error, asking for less truncates then renormalizes, as the OpenAI
+// API accepts.
+func applyDimensions(vectors [][]float32, requested *int, model string) error {
+	if requested == nil || *requested <= 0 {
+		return nil
+	}
+	want := *requested
+	dims := len(vectors[0])
+	if want > dims {
+		return &domain.InvalidRequestError{
+			Param:  "dimensions",
+			Reason: fmt.Sprintf("model %s produces %d dimensions, cannot expand to %d", model, dims, want),
+		}
+	}
+	for i := range vectors {
+		vectors[i] = vectors[i][:want]
+		l2Normalize(vectors[i])
+	}
+	return nil
+}
+
+func embeddingItems(vectors [][]float32, texts []string, encoding string) ([]domain.EmbeddingItem, int) {
 	data := make([]domain.EmbeddingItem, len(texts))
 	tokens := 0
 	for i, vec := range vectors {
 		data[i] = newEmbeddingItem(i, vec, encoding)
 		tokens += localTokenCount(texts[i])
 	}
-
-	return &domain.EmbeddingResponse{
-		Object: "list",
-		Data:   data,
-		Model:  model,
-		Usage: domain.EmbeddingUsage{
-			PromptTokens: tokens,
-			TotalTokens:  tokens,
-		},
-	}, nil
+	return data, tokens
 }

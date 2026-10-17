@@ -82,7 +82,10 @@ func newModelKindTestServer(t *testing.T, ctx context.Context, spy domain.Embedd
 	).WithCatalog(catalogStore)
 	embeddingUC := application.NewEmbeddingUseCase(configStore, router)
 
-	server := NewServer(nil, configUC, modelUC, projectUC, keyUC, providerUC, catalogUC, embeddingUC, "http://localhost:11434")
+	server, err := NewServer(nil, configUC, modelUC, projectUC, keyUC, providerUC, catalogUC, embeddingUC, nil, "http://localhost:11434")
+	if err != nil {
+		t.Fatalf("new server: %v", err)
+	}
 	mux := http.NewServeMux()
 	server.Register(mux)
 	ts := httptest.NewServer(mux)

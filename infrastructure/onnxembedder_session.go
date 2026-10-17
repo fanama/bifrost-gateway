@@ -60,29 +60,27 @@ func (e *OnnxEmbedder) stateLocked(modelID string) (*onnxModelState, error) {
 		return nil, err
 	}
 
-	if e.runtime == nil {
-		if _, err := os.Stat(e.opts.LibraryPath); err != nil {
-			return nil, &domain.InvalidRequestError{
-				Param: "model",
-				Reason: fmt.Sprintf(
-					"onnx runtime not configured: onnx runtime library not found at %q (set ONNX_RUNTIME_LIB)",
-					e.opts.LibraryPath,
-				),
-			}
-		}
-		rt, err := onnxruntime.NewRuntime(e.opts.LibraryPath, onnxAPIVersion)
-		if err != nil {
-			return nil, &domain.InvalidRequestError{Param: "model", Reason: "onnx runtime load failed: " + err.Error()}
-		}
-		env, err := rt.NewEnv("embedding", onnxruntime.LoggingLevelWarning)
-		if err != nil {
-			rt.Close()
-			return nil, &domain.InvalidRequestError{Param: "model", Reason: "onnx env init failed: " + err.Error()}
-		}
-		e.runtime = rt
-		e.env = env
+	if err := e.ensureRuntime(); err != nil {
+		return nil, err
 	}
 
+	if err := e.checkModelFiles(key, modelPath, vocabPath); err != nil {
+		return nil, err
+	}
+	state, err := e.openState(modelPath, vocabPath)
+	if err != nil {
+		return nil, err
+	}
+	if e.sessions == nil {
+		e.sessions = make(map[string]*onnxModelState, 2)
+	}
+	e.sessions[key] = state
+	return state, nil
+}
+
+// checkModelFiles reports exactly which artifact is missing, with a hint that
+// depends on whether the built-in or a local model was requested.
+func (e *OnnxEmbedder) checkModelFiles(key, modelPath, vocabPath string) error {
 	hint := "set ONNX_MODEL_PATH / ONNX_VOCAB_PATH"
 	if key != domain.ModelOnnxMiniLM {
 		hint = fmt.Sprintf("a local model needs %s/<repertoire>/{model.onnx,vocab.txt}", e.opts.ModelsDir)
@@ -95,16 +93,19 @@ func (e *OnnxEmbedder) stateLocked(modelID string) (*onnxModelState, error) {
 		{"onnx vocab", vocabPath},
 	} {
 		if _, err := os.Stat(missing.path); err != nil {
-			return nil, &domain.InvalidRequestError{
+			return &domain.InvalidRequestError{
 				Param:  "model",
 				Reason: fmt.Sprintf("onnx model not configured: %s not found at %q (%s)", missing.label, missing.path, hint),
 			}
 		}
 	}
+	return nil
+}
 
-	// CPUExecutionProvider est le provider par defaut : nommer explicitement
-	// le CPU echoue sur certains builds d'ONNX Runtime ("Unknown provider
-	// name"), on laisse donc la liste vide pour obtenir le defaut.
+// openState creates the per-model session and tokenizer.
+func (e *OnnxEmbedder) openState(modelPath, vocabPath string) (*onnxModelState, error) {
+	// CPUExecutionProvider is the default: naming CPU explicitly fails on some
+	// ONNX Runtime builds ("Unknown provider name"), so the list stays empty.
 	session, err := e.runtime.NewSession(e.env, modelPath, &onnxruntime.SessionOptions{})
 	if err != nil {
 		return nil, &domain.InvalidRequestError{Param: "model", Reason: "onnx session init failed: " + err.Error()}
@@ -114,11 +115,29 @@ func (e *OnnxEmbedder) stateLocked(modelID string) (*onnxModelState, error) {
 		session.Close()
 		return nil, &domain.InvalidRequestError{Param: "model", Reason: "onnx tokenizer init failed: " + err.Error()}
 	}
+	return &onnxModelState{session: session, tok: tok}, nil
+}
 
-	state := &onnxModelState{session: session, tok: tok}
-	if e.sessions == nil {
-		e.sessions = make(map[string]*onnxModelState, 2)
+// ensureRuntime loads the shared ONNX library and environment once.
+func (e *OnnxEmbedder) ensureRuntime() error {
+	if e.runtime != nil {
+		return nil
 	}
-	e.sessions[key] = state
-	return state, nil
+	if _, err := os.Stat(e.opts.LibraryPath); err != nil {
+		return &domain.InvalidRequestError{
+			Param:  "model",
+			Reason: fmt.Sprintf("onnx runtime not configured: onnx runtime library not found at %q (set ONNX_RUNTIME_LIB)", e.opts.LibraryPath),
+		}
+	}
+	rt, err := onnxruntime.NewRuntime(e.opts.LibraryPath, onnxAPIVersion)
+	if err != nil {
+		return &domain.InvalidRequestError{Param: "model", Reason: "onnx runtime load failed: " + err.Error()}
+	}
+	env, err := rt.NewEnv("embedding", onnxruntime.LoggingLevelWarning)
+	if err != nil {
+		rt.Close()
+		return &domain.InvalidRequestError{Param: "model", Reason: "onnx env init failed: " + err.Error()}
+	}
+	e.runtime, e.env = rt, env
+	return nil
 }

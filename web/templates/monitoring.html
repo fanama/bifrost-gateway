@@ -1,0 +1,198 @@
+{{define "page_monitoring"}}
+{{template "head" .}}
+<body hx-boost="true">
+{{template "nav" .}}
+<main id="main" class="page">
+  <div class="page-head">
+    <h1>Monitoring</h1>
+    <div class="actions">
+      <a class="btn ghost small" href="/monitoring/metrics.json" target="_blank" rel="noopener">JSON</a>
+      <button class="btn ghost small" hx-get="/monitoring/stats" hx-target="#monitoring-dashboard" hx-swap="innerHTML">Rafraîchir</button>
+    </div>
+  </div>
+  <section id="monitoring-dashboard"
+           hx-get="/monitoring/stats"
+           hx-trigger="every 3s"
+           hx-swap="innerHTML"
+           hx-sync="this:replace">
+    {{template "monitoring_dashboard" .}}
+  </section>
+</main>
+{{template "tail" .}}
+</body>
+</html>
+{{end}}
+
+{{define "monitoring_dashboard"}}
+<div class="mon-grid">
+  <div class="stat-card">
+    <span class="stat-label">Requêtes servies</span>
+    <span class="stat-value">{{.Requests.Total}}</span>
+    <span class="stat-hint">{{printf "%.1f" .Requests.RequestsPerMinute}} req/min sur 60 s</span>
+  </div>
+  <div class="stat-card">
+    <span class="stat-label">En cours</span>
+    <span class="stat-value">{{.Requests.InFlight}}</span>
+    <span class="stat-hint">requêtes en vol</span>
+  </div>
+  <div class="stat-card">
+    <span class="stat-label">Taux d'erreur</span>
+    <span class="stat-value{{if ge .Requests.ErrorRate 5.0}} stat-err{{end}}">{{printf "%.1f" .Requests.ErrorRate}}%</span>
+    <span class="stat-hint">{{.Requests.ClientErrors4xx}} × 4xx · {{.Requests.ServerErrors5xx}} × 5xx</span>
+  </div>
+  <div class="stat-card">
+    <span class="stat-label">Latence p95</span>
+    <span class="stat-value">{{dur .Latency.P95}}</span>
+    <span class="stat-hint">p50 {{dur .Latency.P50}} · max {{dur .Latency.Max}}</span>
+  </div>
+  <div class="stat-card">
+    <span class="stat-label">Uptime</span>
+    <span class="stat-value">{{dur .Uptime}}</span>
+    <span class="stat-hint">depuis {{if .StartedAt.IsZero}}—{{else}}{{.StartedAt.Format "02/01 15:04:05"}}{{end}}</span>
+  </div>
+  <div class="stat-card">
+    <span class="stat-label">Appels LLM</span>
+    <span class="stat-value">{{.LLM.Calls}}</span>
+    <span class="stat-hint">{{.LLM.Errors}} erreur(s) · {{.LLM.Streams}} flux · {{.LLM.InFlight}} en vol</span>
+  </div>
+</div>
+
+<div class="mon-card">
+  <h3>Trafic — 60 dernières secondes</h3>
+  <div class="bars">
+    {{range .Timeline}}
+    <div class="bar-col" title="{{.Label}} · {{.Total}} req · {{.Errors}} err">
+      <div class="bar{{if .Errors}} bar-error{{end}}" style="height:{{barh .Total $.TimelineMax}}%"></div>
+    </div>
+    {{end}}
+  </div>
+  <div class="bars-axis">
+    <span>il y a 60 s</span>
+    <span>maintenant</span>
+  </div>
+  <div class="mon-badges">
+    {{range .Statuses}}
+    <span class="badge {{if eq .Label "2xx"}}ok{{else if eq .Label "5xx"}}err{{else if eq .Label "4xx"}}warn{{end}}">{{.Label}} · {{.Count}}</span>
+    {{end}}
+  </div>
+</div>
+
+<div class="mon-columns">
+  <div class="mon-card">
+    <h3>Latence</h3>
+    <table>
+      <thead>
+        <tr><th>p50</th><th>p95</th><th>p99</th><th>Moyenne</th><th>Min</th><th>Max</th><th>Échantillons</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>{{dur .Latency.P50}}</td>
+          <td>{{dur .Latency.P95}}</td>
+          <td>{{dur .Latency.P99}}</td>
+          <td>{{dur .Latency.Avg}}</td>
+          <td>{{dur .Latency.Min}}</td>
+          <td>{{dur .Latency.Max}}</td>
+          <td>{{.Latency.Samples}}</td>
+        </tr>
+      </tbody>
+    </table>
+    <p class="muted" style="font-size:.74rem;margin:10px 0 0">
+      Percentiles calculés sur les {{.Latency.Samples}} dernières requêtes mesurées (fenêtre glissante).
+    </p>
+  </div>
+
+  <div class="mon-card">
+    <h3>Processus</h3>
+    <div class="kv"><span>Goroutines</span><strong>{{.Runtime.Goroutines}}</strong></div>
+    <div class="kv"><span>Tas alloué</span><strong>{{printf "%.1f" .Runtime.HeapAllocMB}} Mo</strong></div>
+    <div class="kv"><span>Tas réservé</span><strong>{{printf "%.1f" .Runtime.HeapSysMB}} Mo</strong></div>
+    <div class="kv"><span>Piles</span><strong>{{printf "%.1f" .Runtime.StackMB}} Mo</strong></div>
+    <div class="kv"><span>Collections GC</span><strong>{{.Runtime.NumGC}}</strong></div>
+    <div class="kv"><span>Dernier GC</span><strong>{{if .Runtime.LastGC.IsZero}}jamais{{else}}{{ago .Runtime.LastGC}}{{end}}</strong></div>
+    <div class="kv"><span>GOMAXPROCS / CPU</span><strong>{{.Runtime.GOMAXPROCS}} / {{.Runtime.NumCPU}}</strong></div>
+    <div class="kv"><span>Runtime</span><strong>{{.Runtime.GoVersion}} · {{.Runtime.OS}}/{{.Runtime.Arch}}</strong></div>
+  </div>
+</div>
+
+<div class="mon-card">
+  <h3>Routes</h3>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Méthode</th><th>Route</th><th>Requêtes</th><th>Erreurs</th><th>Latence moy.</th><th>Dernière</th><th>Statut</th></tr>
+      </thead>
+      <tbody>
+      {{range .Routes}}
+        <tr>
+          <td><span class="badge">{{.Method}}</span></td>
+          <td><code>{{.Path}}</code></td>
+          <td>{{.Count}}</td>
+          <td>{{if .Errors}}{{.Errors}}{{else}}<span class="muted">0</span>{{end}}</td>
+          <td>{{dur .AvgLatency}}</td>
+          <td>{{dur .LastLatency}}</td>
+          <td><span class="badge {{if ge .LastStatus 500}}err{{else if ge .LastStatus 400}}warn{{else}}ok{{end}}">{{.LastStatus}}</span></td>
+        </tr>
+      {{else}}
+        <tr><td colspan="7" class="muted center">Aucune requête mesurée pour le moment.</td></tr>
+      {{end}}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="mon-card">
+  <h3>Appels LLM</h3>
+  <div class="mon-badges" style="margin-bottom:10px">
+    <span class="badge">{{.LLM.Calls}} appels</span>
+    <span class="badge {{if .LLM.Errors}}err{{else}}ok{{end}}">{{.LLM.Errors}} erreur(s)</span>
+    <span class="badge">{{.LLM.Streams}} flux</span>
+    <span class="badge">latence moy. {{dur .LLM.AvgLatency}}</span>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Provider</th><th>Modèle</th><th>Appels</th><th>Erreurs</th><th>Latence moy.</th><th>Dernière</th></tr>
+      </thead>
+      <tbody>
+      {{range .LLM.Models}}
+        <tr>
+          <td>{{.Provider}}</td>
+          <td>{{.Model}}</td>
+          <td>{{.Calls}}</td>
+          <td>{{if .Errors}}{{.Errors}}{{else}}<span class="muted">0</span>{{end}}</td>
+          <td>{{dur .AvgLatency}}</td>
+          <td>{{dur .LastLatency}}</td>
+        </tr>
+      {{else}}
+        <tr><td colspan="6" class="muted center">Aucun appel provider depuis le démarrage (ou uniquement des hits de cache).</td></tr>
+      {{end}}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="mon-card">
+  <h3>Erreurs récentes</h3>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Quand</th><th>Méthode</th><th>Route</th><th>Statut</th><th>Durée</th><th>Détail</th></tr>
+      </thead>
+      <tbody>
+      {{range .Errors}}
+        <tr>
+          <td class="muted">{{ago .Time}}</td>
+          <td>{{.Method}}</td>
+          <td><code>{{.Path}}</code></td>
+          <td><span class="badge {{if ge .Status 500}}err{{else}}warn{{end}}">{{.Status}}</span></td>
+          <td>{{dur .Latency}}</td>
+          <td class="muted">{{.Message}}</td>
+        </tr>
+      {{else}}
+        <tr><td colspan="6" class="muted center">Aucune erreur récente.</td></tr>
+      {{end}}
+      </tbody>
+    </table>
+  </div>
+</div>
+{{end}}

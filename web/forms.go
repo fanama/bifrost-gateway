@@ -41,24 +41,27 @@ func parseSchemaRows(r *http.Request) string {
 		return raw
 	}
 
-	names := r.Form["schema_field_name[]"]
-	required := map[int]bool{}
-	for _, v := range r.Form["schema_field_required[]"] {
-		if i, err := strconv.Atoi(v); err == nil {
-			required[i] = true
-		}
-	}
-
-	// Chaque colonne du tableau est une liste d'inputs de meme nom, dont l'ordre
-	// suit l'ordre des lignes. Les colonnes absentes restent des slices vides :
-	// at() sur une slice hors bornes donne la valeur nulle plutot qu'une panique,
-	// ce qui evite de dependre du nombre exact de colonnes envoyees.
-	at := func(column []string, i int) string {
-		if i < len(column) {
-			return column[i]
-		}
+	fields := schemaFieldsFromForm(r)
+	if len(fields) == 0 {
 		return ""
 	}
+
+	// An invalid build must not block saving the rest of the configuration:
+	// keep no schema, and validation will report that json_schema requires one.
+	schema, err := domain.BuildJSONSchema(fields)
+	if err != nil {
+		return ""
+	}
+	return schema
+}
+
+// schemaFieldsFromForm reads the columns of the visual schema builder. Each
+// column is a list of same-named inputs ordered like the rows. Missing columns
+// stay empty slices: at() on an out-of-range slice yields the zero value instead
+// of panicking, so the code does not depend on how many columns were sent.
+func schemaFieldsFromForm(r *http.Request) []domain.SchemaField {
+	names := r.Form["schema_field_name[]"]
+	required := requiredIndexes(r.Form["schema_field_required[]"])
 
 	types := r.Form["schema_field_type[]"]
 	descriptions := r.Form["schema_field_description[]"]
@@ -72,29 +75,34 @@ func parseSchemaRows(r *http.Request) string {
 	for i, name := range names {
 		fields = append(fields, domain.SchemaField{
 			Name:        name,
-			Type:        at(types, i),
-			Description: at(descriptions, i),
+			Type:        formColumn(types, i),
+			Description: formColumn(descriptions, i),
 			Required:    required[i],
-			Enum:        at(enums, i),
-			Min:         at(mins, i),
-			Max:         at(maxs, i),
-			Pattern:     at(patterns, i),
-			ItemsType:   at(itemTypes, i),
+			Enum:        formColumn(enums, i),
+			Min:         formColumn(mins, i),
+			Max:         formColumn(maxs, i),
+			Pattern:     formColumn(patterns, i),
+			ItemsType:   formColumn(itemTypes, i),
 		})
 	}
+	return fields
+}
 
-	if len(fields) == 0 {
-		return ""
+func requiredIndexes(values []string) map[int]bool {
+	required := map[int]bool{}
+	for _, v := range values {
+		if i, err := strconv.Atoi(v); err == nil {
+			required[i] = true
+		}
 	}
+	return required
+}
 
-	// Une construction invalide ne doit pas bloquer la sauvegarde du reste de la
-	// configuration : on ne retient alors aucun schema, et la validation de la
-	// configuration signalera que json_schema en exige un.
-	schema, err := domain.BuildJSONSchema(fields)
-	if err != nil {
-		return ""
+func formColumn(column []string, i int) string {
+	if i < len(column) {
+		return column[i]
 	}
-	return schema
+	return ""
 }
 
 func parseFloatOpt(raw string) *float64 {
@@ -166,56 +174,72 @@ type configFormData struct {
 // l'enregistrement.
 func schemaRowsFromStored(raw string) []schemaRow {
 	rows := []schemaRow{}
-
-	schema, err := domain.ParseJSONSchema(raw)
-	if err == nil {
-		properties, _ := schema["properties"].(map[string]any)
-		required := map[string]bool{}
-		if list, ok := schema["required"].([]any); ok {
-			for _, item := range list {
-				if name, ok := item.(string); ok {
-					required[name] = true
-				}
-			}
-		}
-
-		names := make([]string, 0, len(properties))
-		for name := range properties {
-			names = append(names, name)
-		}
-		// Un schema est un objet : l'ordre de ses cles n'a pas de sens en JSON,
-		// mais il en a un dans un formulaire. Le trier rend l'edition stable.
-		sort.Strings(names)
-
-		for i, name := range names {
-			property, _ := properties[name].(map[string]any)
-			row := schemaRow{Index: i, Name: name, Type: "string", Required: required[name]}
-			if t, ok := property["type"].(string); ok && t != "" {
-				row.Type = t
-			}
-			if d, ok := property["description"].(string); ok {
-				row.Description = d
-			}
-			// Les contraintes sont relues avec le meme code qui les ecrit : sans
-			// cela, un champ enregistre avec un enum ou un minimum ressortirait
-			// vide a l'edition, et l'utilisateur perdrait sa saisie.
-			row.Enum = domain.EnumValues(property)
-			row.Min = domain.MinMaxString(property, "minLength", "minimum")
-			row.Max = domain.MinMaxString(property, "maxLength", "maximum")
-			if p, ok := property["pattern"].(string); ok {
-				row.Pattern = p
-			}
-			row.ItemsType = domain.ItemsType(property)
-			rows = append(rows, row)
-		}
+	if schema, err := domain.ParseJSONSchema(raw); err == nil {
+		rows = rowsFromSchema(schema)
 	}
-
 	if len(rows) == 0 {
-		// Toujours une ligne : un tableau vide n'offre aucun moyen d'ajouter un
-		// premier champ.
+		// Always one line: an empty table offers no way to add a first field.
 		rows = append(rows, schemaRow{Index: 0, Type: "string"})
 	}
 	return rows
+}
+
+func rowsFromSchema(schema map[string]any) []schemaRow {
+	properties, _ := schema["properties"].(map[string]any)
+	required := requiredPropertyNames(schema)
+	names := sortedPropertyNames(properties)
+
+	rows := make([]schemaRow, 0, len(names))
+	for i, name := range names {
+		property, _ := properties[name].(map[string]any)
+		rows = append(rows, schemaRowFor(i, name, property, required[name]))
+	}
+	return rows
+}
+
+func requiredPropertyNames(schema map[string]any) map[string]bool {
+	required := map[string]bool{}
+	list, ok := schema["required"].([]any)
+	if !ok {
+		return required
+	}
+	for _, item := range list {
+		if name, ok := item.(string); ok {
+			required[name] = true
+		}
+	}
+	return required
+}
+
+// sortedPropertyNames keeps the edit form stable: object key order is
+// meaningless in JSON but not in a form.
+func sortedPropertyNames(properties map[string]any) []string {
+	names := make([]string, 0, len(properties))
+	for name := range properties {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// schemaRowFor re-reads a stored property with the same helpers that write it,
+// so an enum or a minimum survives an edit round-trip.
+func schemaRowFor(index int, name string, property map[string]any, required bool) schemaRow {
+	row := schemaRow{Index: index, Name: name, Type: "string", Required: required}
+	if t, ok := property["type"].(string); ok && t != "" {
+		row.Type = t
+	}
+	if d, ok := property["description"].(string); ok {
+		row.Description = d
+	}
+	row.Enum = domain.EnumValues(property)
+	row.Min = domain.MinMaxString(property, "minLength", "minimum")
+	row.Max = domain.MinMaxString(property, "maxLength", "maximum")
+	if p, ok := property["pattern"].(string); ok {
+		row.Pattern = p
+	}
+	row.ItemsType = domain.ItemsType(property)
+	return row
 }
 
 // editingSchema rend le schema a reafficher, celui d'une configuration en cours

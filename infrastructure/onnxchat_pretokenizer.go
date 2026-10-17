@@ -121,8 +121,35 @@ var gpt2Contractions = []string{"'s", "'t", "'re", "'ve", "'m", "'ll", "'d"}
 // sont testees dans l'ordre du regex d'origine.
 func scanGPT2Pattern(text string) []string {
 	var out []string
-	i := 0
 	runes := []rune(text)
+	for i := 0; i < len(runes); {
+		if matched := contractionAt(runes, i); matched != "" {
+			out = append(out, matched)
+			i += len([]rune(matched))
+			continue
+		}
+		end := scanGPT2Piece(runes, i)
+		if end <= i {
+			end = i + 1
+		}
+		out = append(out, string(runes[i:end]))
+		i = end
+	}
+	return out
+}
+
+// contractionAt returns the lowercase English contraction starting at i, if any.
+func contractionAt(runes []rune, i int) string {
+	for _, c := range gpt2Contractions {
+		if hasPrefixAt(runes, i, c) {
+			return c
+		}
+	}
+	return ""
+}
+
+// scanGPT2Piece applies the remaining ByteLevel rules in regex order.
+func scanGPT2Piece(runes []rune, i int) int {
 	n := len(runes)
 	next := func(from int) rune {
 		if from < n {
@@ -130,62 +157,47 @@ func scanGPT2Pattern(text string) []string {
 		}
 		return 0
 	}
-	for i < n {
-		// 1. contractions minuscules : 's 't 're 've 'm 'll 'd
-		matched := ""
-		for _, c := range gpt2Contractions {
-			if hasPrefixAt(runes, i, c) {
-				matched = c
-				break
-			}
-		}
-		if matched != "" {
-			out = append(out, matched)
-			i += len([]rune(matched))
-			continue
-		}
 
-		start := i
-		space := runes[i] == ' '
-		j := i
-		if space {
-			j++
-		}
-		body := next(j)
-		switch {
-		case space && isLetter(body) || !space && isLetter(runes[i]):
-			for j < n && isLetter(runes[j]) {
-				j++
-			}
-		case space && isASCIIDigit(body) || !space && isASCIIDigit(runes[i]):
-			// Digits(individual) : un seul chiffre par fragment.
-			j++
-		case space && body != 0 && !isSpace(body) && !isLetter(body) && !isASCIIDigit(body) ||
-			!space && !isSpace(runes[i]) && !isLetter(runes[i]) && !isASCIIDigit(runes[i]):
-			for j < n && !isSpace(runes[j]) && !isLetter(runes[j]) && !isASCIIDigit(runes[j]) {
-				j++
-			}
-		default:
-			// Blancs : \s+(?!\S) prend tous sauf le dernier quand un
-			// non-blanc suit ; sinon toute la suite (fin de fragment).
-			j = i
-			for j < n && isSpace(runes[j]) {
-				j++
-			}
-			if j < n && j-i > 1 {
-				j-- // le dernier blanc s'attachera au mot suivant
-			}
-			if j == i {
-				j++ // \s+ : un seul blanc sans suite favorable
-			}
-			out = append(out, string(runes[start:j]))
-			i = j
-			continue
-		}
-		out = append(out, string(runes[start:j]))
-		i = j
+	space := runes[i] == ' '
+	j := i
+	if space {
+		j++
 	}
-	return out
+	body := next(j)
+	switch {
+	case space && isLetter(body) || !space && isLetter(runes[i]):
+		for j < n && isLetter(runes[j]) {
+			j++
+		}
+	case space && isASCIIDigit(body) || !space && isASCIIDigit(runes[i]):
+		// Digits(individual): one digit per piece.
+		j++
+	case space && body != 0 && !isSpace(body) && !isLetter(body) && !isASCIIDigit(body) ||
+		!space && !isSpace(runes[i]) && !isLetter(runes[i]) && !isASCIIDigit(runes[i]):
+		for j < n && !isSpace(runes[j]) && !isLetter(runes[j]) && !isASCIIDigit(runes[j]) {
+			j++
+		}
+	default:
+		return scanGPTSpaces(runes, i)
+	}
+	return j
+}
+
+// scanGPTSpaces applies \s+(?!\S): it takes all spaces but the last when a
+// non-space follows, otherwise the whole run (end of piece).
+func scanGPTSpaces(runes []rune, i int) int {
+	n := len(runes)
+	j := i
+	for j < n && isSpace(runes[j]) {
+		j++
+	}
+	if j < n && j-i > 1 {
+		j--
+	}
+	if j == i {
+		j++
+	}
+	return j
 }
 
 func hasPrefixAt(runes []rune, at int, prefix string) bool {

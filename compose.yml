@@ -1,18 +1,19 @@
 services:
   # ==========================================
-  # PASSERELLE BRIDGE (application)
+  # BRIDGE GATEWAY (application)
   # ==========================================
-  # Le gateway est autonome : persistance SQLite (fichier) et cache en memoire.
-  # Aucun service externe n'est requis.
+  # The gateway is self-contained: SQLite persistence (a file) and an
+  # in-memory cache. No external service is required.
   gateway:
     build: .
     volumes:
-      - ./config.yaml:/app/config.yaml
+      - ./config.yaml:/app/config.yaml:ro
       - ./data:/app/data
     ports:
       - "${BRIDGE_PORT:-4000}:8080"
     env_file:
-      - .env
+      - path: .env
+        required: false
     environment:
       OLLAMA_HOST: http://host.docker.internal:11434
     extra_hosts:
@@ -30,9 +31,6 @@ services:
       - "/app/data"
     restart: unless-stopped
 
-# ==========================================
-# RESEAU
-# ==========================================
 networks:
   llmaas:
     name: llmaas

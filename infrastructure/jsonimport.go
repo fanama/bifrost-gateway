@@ -44,32 +44,40 @@ func ImportJSON[T any](ctx context.Context, db *sql.DB, source jsonSource[T]) (i
 		return 0, renameAside(source.path)
 	}
 
+	imported, err := insertItems(ctx, db, source.table, items, source.idOf)
+	if err != nil {
+		return imported, fmt.Errorf("%s: %w", source.path, err)
+	}
+	if err := renameAside(source.path); err != nil {
+		return imported, err
+	}
+	return imported, nil
+}
+
+// insertItems persists the decoded entities with INSERT OR IGNORE, so an
+// existing ID is left untouched and the import stays idempotent.
+func insertItems[T any](ctx context.Context, db *sql.DB, table string, items []T, idOf func(*T) string) (int, error) {
 	imported := 0
 	for i := range items {
 		item := items[i]
-		id := source.idOf(&item)
+		id := idOf(&item)
 		if id == "" {
-			continue // entite sans identifiant : rien a inserer
+			continue
 		}
 		encoded, err := json.Marshal(&item)
 		if err != nil {
-			return imported, fmt.Errorf("encode item %d from %s: %w", i, source.path, err)
+			return imported, fmt.Errorf("encode item %d: %w", i, err)
 		}
 		res, err := db.ExecContext(ctx,
-			"INSERT OR IGNORE INTO "+quoteIdent(source.table)+"(id, payload) VALUES(?, ?)",
-			id, encoded)
+			"INSERT OR IGNORE INTO "+quoteIdent(table)+"(id, payload) VALUES(?, ?)", id, encoded)
 		if err != nil {
-			return imported, fmt.Errorf("insert into %s: %w", source.table, err)
+			return imported, fmt.Errorf("insert into %s: %w", table, err)
 		}
 		affected, err := res.RowsAffected()
 		if err != nil {
 			return imported, err
 		}
 		imported += int(affected)
-	}
-
-	if err := renameAside(source.path); err != nil {
-		return imported, err
 	}
 	return imported, nil
 }
@@ -94,58 +102,12 @@ func renameAside(path string) error {
 // SQLite. dir est le dossier data/ (celui que derivait --store desormais).
 func ImportLegacyStoreData(ctx context.Context, db *sql.DB, dir string) (map[string]int, error) {
 	counts := map[string]int{}
-	sources := []struct {
-		name  string
-		table string
-		file  string
-		idOf  func(any) string
-		run   func() (int, error)
-	}{
-		{
-			name: "configs", table: TableConfigs, file: "configs.json",
-			run: func() (int, error) {
-				return ImportJSON(ctx, db, jsonSource[domain.ChatConfig]{
-					table: TableConfigs, path: filepath.Join(dir, "configs.json"),
-					idOf: func(c *domain.ChatConfig) string { return c.ID },
-				})
-			},
-		},
-		{
-			name: "projects", table: TableProjects, file: "projects.json",
-			run: func() (int, error) {
-				return ImportJSON(ctx, db, jsonSource[domain.Project]{
-					table: TableProjects, path: filepath.Join(dir, "projects.json"),
-					idOf: func(p *domain.Project) string { return p.ID },
-				})
-			},
-		},
-		{
-			name: "apikeys", table: TableAPIKeys, file: "apikeys.json",
-			run: func() (int, error) {
-				return ImportJSON(ctx, db, jsonSource[domain.APIKey]{
-					table: TableAPIKeys, path: filepath.Join(dir, "apikeys.json"),
-					idOf: func(k *domain.APIKey) string { return k.ID },
-				})
-			},
-		},
-		{
-			name: "providers", table: TableProviders, file: "providers.json",
-			run: func() (int, error) {
-				return ImportJSON(ctx, db, jsonSource[domain.Provider]{
-					table: TableProviders, path: filepath.Join(dir, "providers.json"),
-					idOf: func(p *domain.Provider) string { return p.ID },
-				})
-			},
-		},
-		{
-			name: "models", table: TableCatalogModel, file: "models.json",
-			run: func() (int, error) {
-				return ImportJSON(ctx, db, jsonSource[domain.CatalogModel]{
-					table: TableCatalogModel, path: filepath.Join(dir, "models.json"),
-					idOf: func(m *domain.CatalogModel) string { return m.ID },
-				})
-			},
-		},
+	sources := []legacyImporter{
+		legacyImporterFor[domain.ChatConfig](ctx, db, dir, "configs", TableConfigs, "configs.json", func(c *domain.ChatConfig) string { return c.ID }),
+		legacyImporterFor[domain.Project](ctx, db, dir, "projects", TableProjects, "projects.json", func(p *domain.Project) string { return p.ID }),
+		legacyImporterFor[domain.APIKey](ctx, db, dir, "apikeys", TableAPIKeys, "apikeys.json", func(k *domain.APIKey) string { return k.ID }),
+		legacyImporterFor[domain.Provider](ctx, db, dir, "providers", TableProviders, "providers.json", func(p *domain.Provider) string { return p.ID }),
+		legacyImporterFor[domain.CatalogModel](ctx, db, dir, "models", TableCatalogModel, "models.json", func(m *domain.CatalogModel) string { return m.ID }),
 	}
 
 	for _, src := range sources {
@@ -158,4 +120,18 @@ func ImportLegacyStoreData(ctx context.Context, db *sql.DB, dir string) (map[str
 		}
 	}
 	return counts, nil
+}
+
+// legacyImporter binds one JSON collection to its SQLite table.
+type legacyImporter struct {
+	name string
+	run  func() (int, error)
+}
+
+func legacyImporterFor[T any](ctx context.Context, db *sql.DB, dir, name, table, file string, idOf func(*T) string) legacyImporter {
+	return legacyImporter{name: name, run: func() (int, error) {
+		return ImportJSON(ctx, db, jsonSource[T]{
+			table: table, path: filepath.Join(dir, file), idOf: idOf,
+		})
+	}}
 }

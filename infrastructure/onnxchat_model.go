@@ -16,6 +16,31 @@ import (
 // defauts coherents avec l'export optimum : heads g toutes egales sans
 // num_key_value_heads.
 func readOnnxChatModelMeta(base string, sess *onnxruntime.Session, tok *onnxChatTokenizer) (*onnxChatModel, error) {
+	cfg, err := readOnnxChatConfig(base)
+	if err != nil {
+		return nil, err
+	}
+	kvHeads, headDim, err := chatGeometry(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	st := &onnxChatModel{
+		session: sess,
+		tok:     tok,
+		kvHeads: kvHeads,
+		headDim: headDim,
+		layers:  cfg.NumHiddenLayers,
+	}
+	if st.layers <= 0 {
+		// Fallback: the graph declares its layers through its inputs.
+		st.layers = len(sess.InputNames()) / 2
+	}
+	st.eos = readEOSTokens(base)
+	return st, nil
+}
+
+func readOnnxChatConfig(base string) (*onnxChatConfig, error) {
 	raw, err := os.ReadFile(filepath.Join(base, "config.json"))
 	if err != nil {
 		return nil, fmt.Errorf("onnx chat config: %w", err)
@@ -24,37 +49,38 @@ func readOnnxChatModelMeta(base string, sess *onnxruntime.Session, tok *onnxChat
 	if err := json.Unmarshal(raw, &cfg); err != nil {
 		return nil, fmt.Errorf("onnx chat config: %w", err)
 	}
+	return &cfg, nil
+}
+
+// chatGeometry derives the KV head count and head width, defaulting grouped
+// query attention to the full head count when num_key_value_heads is absent.
+func chatGeometry(cfg *onnxChatConfig) (kvHeads, headDim int, err error) {
 	if cfg.NumAttentionHeads <= 0 || cfg.HiddenSize <= 0 || cfg.HiddenSize%cfg.NumAttentionHeads != 0 {
-		return nil, fmt.Errorf("onnx chat config: invalid geometry (heads=%d hidden=%d)", cfg.NumAttentionHeads, cfg.HiddenSize)
+		return 0, 0, fmt.Errorf("onnx chat config: invalid geometry (heads=%d hidden=%d)", cfg.NumAttentionHeads, cfg.HiddenSize)
 	}
-	kvHeads := cfg.NumKeyValueHeads
+	kvHeads = cfg.NumKeyValueHeads
 	if kvHeads <= 0 {
 		kvHeads = cfg.NumAttentionHeads
 	}
-	st := &onnxChatModel{
-		session: sess,
-		tok:     tok,
-		kvHeads: kvHeads,
-		headDim: cfg.HiddenSize / cfg.NumAttentionHeads,
-		layers:  cfg.NumHiddenLayers,
-		eos:     map[int]bool{},
-	}
-	if st.layers <= 0 {
-		// Repli : le graphe declare lui-meme ses couches via ses inputs.
-		st.layers = len(sess.InputNames()) / 2
-	}
+	return kvHeads, cfg.HiddenSize / cfg.NumAttentionHeads, nil
+}
+
+// readEOSTokens reads stopping IDs; a missing or unreadable file falls back to
+// the standard Llama/SmolLM end-of-sequence ID.
+func readEOSTokens(base string) map[int]bool {
+	eos := map[int]bool{}
 	if raw, err := os.ReadFile(filepath.Join(base, "generation_config.json")); err == nil {
 		var gen onnxChatGenConfig
 		if err := json.Unmarshal(raw, &gen); err == nil {
 			for _, v := range parseEOSTokenID(gen.EOSTokenID) {
-				st.eos[v] = true
+				eos[v] = true
 			}
 		}
 	}
-	if len(st.eos) == 0 {
-		st.eos[2] = true // dernier recours : id de fin standard Llama/SmolLM
+	if len(eos) == 0 {
+		eos[2] = true
 	}
-	return st, nil
+	return eos
 }
 
 // renderChatPrompt assemble le prompt selon le template de chat du modele

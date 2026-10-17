@@ -76,6 +76,22 @@ func (e *LocalEmbedder) Embed(ctx context.Context, cfg *domain.ChatConfig, req *
 		return nil, err
 	}
 
+	model := embeddingModel(cfg, req)
+	data, tokens, err := encodeTexts(ctx, texts, dims, encoding)
+	if err != nil {
+		return nil, err
+	}
+	return &domain.EmbeddingResponse{
+		Object: "list",
+		Data:   data,
+		Model:  model,
+		Usage:  domain.EmbeddingUsage{PromptTokens: tokens, TotalTokens: tokens},
+	}, nil
+}
+
+// embeddingModel lets the request override the configured model name, which
+// lets the API echo the caller's model while encoding locally.
+func embeddingModel(cfg *domain.ChatConfig, req *domain.EmbeddingRequest) string {
 	model := LocalEmbeddingModel
 	if cfg != nil && strings.TrimSpace(cfg.Model) != "" {
 		model = cfg.Model
@@ -83,29 +99,22 @@ func (e *LocalEmbedder) Embed(ctx context.Context, cfg *domain.ChatConfig, req *
 	if strings.TrimSpace(req.Model) != "" {
 		model = req.Model
 	}
+	return model
+}
 
+// encodeTexts embeds every input, checking cancellation between texts rather
+// than during the computation.
+func encodeTexts(ctx context.Context, texts []string, dims int, encoding string) ([]domain.EmbeddingItem, int, error) {
 	data := make([]domain.EmbeddingItem, len(texts))
 	tokens := 0
 	for i, text := range texts {
-		// Un appel local reste cancellable comme un appel distant : le ctx
-		// est verifie entre chaque texte plutot que pendant le calcul.
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
-		vec := embedText(text, dims)
+		data[i] = newEmbeddingItem(i, embedText(text, dims), encoding)
 		tokens += localTokenCount(text)
-		data[i] = newEmbeddingItem(i, vec, encoding)
 	}
-
-	return &domain.EmbeddingResponse{
-		Object: "list",
-		Data:   data,
-		Model:  model,
-		Usage: domain.EmbeddingUsage{
-			PromptTokens: tokens,
-			TotalTokens:  tokens,
-		},
-	}, nil
+	return data, tokens, nil
 }
 
 // dimensions resout la dimension demandee. Sans demande, la valeur par

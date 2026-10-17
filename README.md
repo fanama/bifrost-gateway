@@ -1,795 +1,482 @@
-# Bridge Gateway - BifrostAI
+# Bridge Gateway — BifrostAI
 
 [![Go](https://img.shields.io/badge/Go-1.26+-00ADD8?logo=go)](https://go.dev/)
 [![BifrostAI](https://img.shields.io/badge/BifrostAI-v1.4.4-blue)](https://github.com/maximhq/bifrost)
 [![Docker](https://img.shields.io/badge/Docker-Compose-blue)](https://www.docker.com/)
 [![DDD](https://img.shields.io/badge/Architecture-DDD-orange)](https://en.wikipedia.org/wiki/Domain-driven_design)
 
-**Bridge Gateway** est une passerelle d'acces API (API Gateway) intelligente basee sur **BifrostAI**. Ecrite en **Go**, elle utilise nativement le SDK BifrostAI pour un routage performant vers differents fournisseurs LLM (Ollama par defaut, OpenAI, Mistral, Google/Gemini, Anthropic, Groq, Azure, Vertex, passerelles privees compatibles OpenAI) tout en appliquant un pipeline d'enrichissement metier (system prompt injection, formatage de reponse, routage par modele).
+Bridge Gateway is an OpenAI-compatible API gateway built on **BifrostAI**. It is
+written in Go and speaks directly to the Bifrost SDK (no HTTP proxy hop),
+routing requests to Ollama, OpenAI, Mistral, Google Gemini, Anthropic, Groq,
+Azure, Vertex, OpenRouter, vLLM and any OpenAI-compatible gateway. A small
+enrichment pipeline applies the project's system prompt and response settings
+before each call.
 
----
+## Key features
 
-## Fonctionnalites Cles
-
-* **SDK BifrostAI Native** : Utilise `github.com/maximhq/bifrost/core` directement en Go - pas de proxy HTTP intermediaire.
-* **Abstraction Multi-LLM** : Interface unique compatible avec le standard OpenAI pour requeter Ollama (defaut: `gemma4:e4b`), OpenAI, Mistral, Google/Gemini, Anthropic, Groq, Azure, et n'importe quelle passerelle compatible OpenAI.
-* **UI Web HTMX (Clean Architecture)** : Interface de discussion, listing et gestion des modeles, gestion des providers (avec cles d'API), projets multi-tenant avec configurations et cles API, rendue cote serveur en fragments HTMX (`hx-boost`, OOB swaps) sans JavaScript externe.
-* **Enrichissement Metier** : Pipeline d'enrichissement applique a chaque requete entrante (injection de system prompt, format de reponse strict, modele par defaut).
-* **Configurations Multi-Providers** : Enregistrement de plusieurs configurations LLM (provider, modele, base URL, cle API, system prompt, parametres de generation) persistees au format JSON.
-* **Gestion des providers & Cles d'API** : Liste des fournisseurs (nom, base URL par defaut, cle d'API par defaut avec support des variables d'environnement ex: `{env:API_KEY}`) gerable depuis l'UI (`/providers`). Autofill et fallback automatique de la cle API et de l'URL lors des configurations. Seed des defauts au premier demarrage (`data/providers.json`).
-* **Catalogue de modeles** : Ajout/retrait de modeles (nom + provider) depuis l'UI (`/models`), fusionnes deduques avec `config.yaml` et les modeles utilises dans les configurations. Seed depuis `config.yaml` au premier demarrage (`data/models.json`).
-* **Moteurs locaux ONNX** : embeddings **et chat** executes in-process (runtime charge en pure Go, sans CGO ni service compagnon). Artefacts sous `models/onnx/` ignores par git mais **telecharges au premier lancement** (`ONNX_AUTO_DOWNLOAD=0` pour desactiver), modeles discovers au demarrage et semes au catalogue.
-* **Projets multi-tenant** : Chaque configuration appartient a un projet ; les API keys sont creees par projet et authentifient les appels `/v1/chat/completions` (la configuration active du projet sert de modele/params). Une migration auto cree le projet par defaut `General`.
-* **Haute Performance** : Serveur HTTP Go natif avec gestion des timeouts et signaux de fermeture gracieuse.
-
----
+- **Native BifrostAI SDK** — `github.com/maximhq/bifrost/core` is embedded
+  directly in the process.
+- **Multi-provider abstraction** — one OpenAI-compatible surface for cloud and
+  local providers, including private OpenAI-compatible gateways.
+- **HTMX web UI** — chat, models, providers, projects, per-project
+  configurations and API keys, plus monitoring; server-rendered fragments with
+  no external JavaScript bundle.
+- **Business enrichment** — system-prompt injection, default model selection,
+  strict response formats and generation parameters.
+- **Multi-tenant projects** — every configuration belongs to a project; API
+  keys are scoped to a project and authenticate `/v1/*` calls against that
+  project's active configuration.
+- **Local ONNX engines** — embeddings and chat run in-process through a pure-Go
+  ONNX Runtime binding. Artifacts live under `models/onnx/` (gitignored) and are
+  downloaded on first start unless `ONNX_AUTO_DOWNLOAD=0`.
+- **Tier routing and failover** — a local classifier picks `fast`, `balanced`
+  or `frontier`; provider saturation moves the request up the ladder and cools
+  the failing tier down.
+- **In-process monitoring** — traffic, p50/p95/p99 latency, routes, recent
+  errors and LLM calls at `/monitoring`, with a JSON snapshot at
+  `/monitoring/metrics.json`.
+- **SQLite persistence** — a single file, no external database or cache
+  service. Legacy JSON stores from `data/` are imported automatically.
 
 ## Architecture
 
 ```mermaid
 flowchart TD
-    subgraph GoApp [Bridge Gateway - Go]
-        direction TB
-        HTTP[HTTP Server :BRIDGE_PORT] --> MW[Enrichment Middleware]
-        MW --> BifrostSDK[BifrostAI Go SDK]
+    subgraph Delivery [Delivery]
+        API[handlers/ — OpenAI API]
+        UI[web/ — HTMX UI]
     end
-
-    BifrostSDK -->|Ollama| Ollama[(Local Ollama - gemma4:e4b)]
-    BifrostSDK -->|OpenAI / Compatible| OpenAI[(OpenAI / Passerelles Privees)]
-    BifrostSDK -->|Mistral| Mistral[(Mistral API)]
-    BifrostSDK -->|Google / Gemini| Google[(Google Gemini)]
-    BifrostSDK -->|Azure| Azure[(Azure OpenAI)]
-
-    classDef goStyle fill:#00ADD8,stroke:#007D9C,stroke-width:2px,color:#fff,font-weight:bold;
-    classDef extStyle fill:#ECEFF1,stroke:#546E7A,stroke-width:2px;
-    class HTTP,MW,BifrostSDK goStyle;
-    class Ollama,OpenAI,Mistral,Google,Azure extStyle;
+    subgraph App [Application]
+        UC[application/ — use cases]
+    end
+    subgraph Core [Domain]
+        D[domain/ — entities, ports, rules]
+    end
+    subgraph Adapters [Infrastructure]
+        I[infrastructure/ — SQLite, Bifrost, ONNX, cache, metrics]
+    end
+    API --> UC
+    UI --> UC
+    UC --> D
+    I --> D
+    Root[app.go / app_server.go / wiring.go] -. composition root .-> Delivery
+    Root -. composition root .-> Adapters
 ```
 
-### Pipeline d'Enrichissement
-
-Chaque requete passe par les etapes suivantes avant d'atteindre le LLM :
-
-| Etape | Regle | Comportement |
-|---|---|---|
-| **1** | **Injection System Prompt** | Si `system_prompt` configure et aucun role `system` present, injecte en premier message. |
-| **2** | **Modele par Defaut** | Si aucun modele specifie, applique le `default_model` configure. |
-| **3** | **Format de Reponse** | Si non defini, applique le `response_format` configure (ex: JSON strict). |
-
----
-
-## Structure du Projet
+Dependencies only point inward:
 
 ```
-gteway-local/
-├── main.go                    # Point d'entree : cablage, serveur HTTP, arret gracieux
-├── wiring.go                  # Helpers de composition (seeds catalogue/providers, caches, provider LLM)
-├── go.mod / go.sum            # Dependencies Go
-├── config.yaml                # Configuration BifrostAI + modeles
-├── compose.yml                # Docker Compose (passerelle autonome : SQLite + cache memoire)
-├── Dockerfile                 # Build multi-stage : binaire Go compile dans l'image, runtime Debian glibc
-├── Makefile                   # Raccourcis build/run/test
-├── data/                      # Base SQLite (bridge.db) + anciens stores JSON a migrer
-├── domain/                    # Cœur metier (0 dependance framework)
-│   ├── store.go               # CrudRepository[T] / UpdatableRepository[T] (ports generiques)
-│   ├── models.go, chat.go     # Metadata, ChatMessage, ChatRequest, EnrichedRequest
-│   ├── config.go              # ChatConfig (entite) + ChatConfigRepository
-│   ├── config_tier.go         # Echelle de routage (tiers, rangs, options)
-│   ├── config_response_format.go  # Format de reponse + parsing JSON Schema
-│   ├── project.go, apikey.go  # Project, APIKey (empreinte sha256) + repositories
-│   ├── provider.go, model.go, modelcatalog.go  # Provider, ModelInfo, CatalogModel + ports
-│   ├── embedding.go           # EmbeddingRequest/Response + EmbeddingProvider (port)
-│   ├── llm.go                 # LLMProvider, StreamingLLMProvider, Classifier (ports)
-│   ├── cache.go               # Cache (port) + CacheKeyFactory
-│   ├── services.go            # EnrichmentService (pipeline d'enrichissement)
-│   ├── schema.go              # JSON Schema (constructeur, mode strict)
-│   ├── schema_property.go, schema_form.go  # Proprietes du schema + rehydratation du formulaire
-│   └── errors.go, id.go       # Erreurs metier, generation d'identifiants
-├── application/               # Cas d'usage (depend UNIQUEMENT de domain)
-│   ├── entity.go              # EntityUseCase generique (CRUD partage)
-│   ├── chat.go, embedding.go  # ChatUseCase (Send/Stream), EmbeddingUseCase
-│   ├── config.go, project.go, apikey.go, provider.go, modelcatalog.go
-│   ├── auth.go                # AuthUseCase (master key globale ou cle projet)
-│   └── model.go               # ModelUseCase (fusion modeles gateway + configurations)
-├── infrastructure/            # Adaptateurs techniques (dependent UNIQUEMENT de domain)
-│   ├── sqlstore.go, sqlschema.go  # SQLite (modernc, sans CGO) + migrations
-│   ├── config_store.go, project_store.go, apikey_store.go,
-│   │   provider_store.go, modelcatalog_store.go  # Repositories SQLite
-│   ├── cachedstore.go, cachedapikeystore.go, cachedprojectstore.go, cachedllm.go, memorycache.go  # Decorateurs de cache (OCP)
-│   ├── bifrost.go, bifrost_provider.go, bifrost_convert.go, provider_mapping.go, dynamic_account.go, account.go  # Client BifrostAI + LLMProvider
-│   ├── chatrouter.go, routing.go, routing_ladder.go, routing_stream.go, classifier.go, failover.go, cooldown.go  # Routage par tier
-│   ├── embeddingrouter.go, localembedder.go, local_hasher.go, embedding_format.go  # Moteur d'embedding embarque + format
-│   ├── onnxembedder.go, onnxembedder_session.go, onnxembedder_infer.go, onnxoptions.go  # Moteur d'embedding ONNX
-│   ├── onnxchat*.go, onnxassets.go, onnxdownload.go, onnxmodels.go, wordpiece.go  # Moteurs ONNX locaux (sans CGO)
-│   ├── jsonimport.go          # Migration des anciens stores JSON
-│   └── config.go, port.go     # Chargement config.yaml, resolution du port
-├── handlers/                  # API compatible OpenAI (delivery)
-│   ├── ports.go               # Interfaces de consommateur (DIP/ISP)
-│   ├── routes.go              # RegisterRoutes (partage production + tests de contrat)
-│   ├── chat.go, stream.go, sse.go  # Completions (reponse JSON + SSE)
-│   ├── response.go, errors.go # Corps de reponse OpenAI + enveloppe d'erreur
-│   └── models.go, embeddings.go, cors.go
-├── web/                       # Couche de delivery (HTMX), decoupee par domaine (SRP)
-│   ├── ports.go               # Interfaces de consommateur (DIP/ISP)
-│   ├── server.go              # Façade : uiShared (rendu), assemblage des sous-contrôleurs, routing
-│   ├── chat.go, projects.go, project_configs.go, project_keys.go  # Sous-contrôleurs : discussion, projets + configs + cles
-│   ├── embeddings.go, embedding_choices.go, embedding_view.go  # Testeur d'embeddings
-│   ├── models.go, providers.go, embeddings.go  # Sous-contrôleurs : catalogue, providers, testeur
-│   ├── forms.go               # Parsing des formulaires de configuration (parties pures)
-│   ├── static/htmx.min.js     # HTMX vendorise (embarque dans le binaire)
-│   └── templates/             # Partials + modeles (layout, chat, models, projects)
-├── docs/                      # Spec OpenAPI 3 embarquee + Swagger UI (/swagger)
-└── tests/                     # Tests de contrat et d'integration (couche complete)
-    ├── openai_contract_test.go  # Contrat OpenAI sur handlers.RegisterRoutes
-    ├── application_test.go    # Tests des cas d'usage (configs CRUD, chat, modeles)
-    └── projects_test.go       # Tests projets, cles API, auth, active config par projet
+handlers/  web/  ──►  application/  ──►  domain/
+infrastructure/  ──────────────────────►  domain/
+app.go + wiring.go = composition root (the only place that assembles everything)
 ```
 
-### Description des Couches
+### Layer rules
 
-* **`domain/` (Coeur Metier)** : Independant de tout framework et de toute infrastructure. Entites (`ChatConfig`, `ModelInfo`, `ChatMessage`), ports de sortie (`ChatConfigRepository`, `LLMProvider`, `EmbeddingProvider`, `Cache`) et regles metier (pipeline d'enrichissement, tiers de routage, validation des schemas).
-* **`application/` (Cas d'Usage)** : Orchestration des regles metier via les portes d'entree. Depend UNIQUEMENT des interfaces `domain` (inversion de dependance). `EntityUseCase` genericise le CRUD partage par les entites gerees depuis l'UI.
-* **`infrastructure/` (Adaptateurs)** : Implantations concretes des interfaces `domain` : client BifrostAI, repositories SQLite (modernc, sans CGO), caches memoire en decorateur, routeurs de chat et d'embedding, moteurs ONNX locaux.
-* **`handlers/` (API)** : API compatible OpenAI (`/v1/chat/completions` y compris en SSE, `/v1/models`, `/v1/embeddings`), health checks, gestion d'erreurs. Le routage `/v1` est centralise dans `handlers.RegisterRoutes`, partage entre `main.go` et les tests de contrat. Le streaming est dans `handlers/stream.go`, la reponse unique dans `chat.go`.
-* **`web/` (Delivery UI)** : Facade `Server` (routing + assemblage) et sous-contrôleurs par domaine — `chatController`, `projectsController`, `modelsController`, `providersController`, `embeddingsController` — chacun ne détenant que ses ports ; le rendu et les helpers transverses vivent dans `uiShared` (SRP). Templates HTMX embarques (`go:embed`), routing Go 1.22 (`GET /models`, `POST /configs/{id}`, etc.).
+- **DIP** — `handlers/ports.go` and `web/ports.go` declare narrow interfaces on
+  the consumer side. Concrete use cases are injected by the composition root.
+- **ISP** — a port only exposes the methods its consumer uses. `LLMProvider`
+  and `StreamingLLMProvider` are separate: streaming is a capability, not an
+  obligation.
+- **OCP** — repository caches, LLM response caches, the tier router and the
+  embedding router wrap ports without modifying them. Enabling or replacing a
+  piece is a wiring change.
+- **SRP** — entities and rules in `domain/`, orchestration in `application/`,
+  technology in `infrastructure/`, presentation in `handlers/` and `web/`, and
+  assembly in the composition root.
+- **LSP** — every adapter (SQLite, cache, router, Bifrost, ONNX) is
+  substitutable for its port and exercised by contract tests.
 
-### Regles de dependance (Clean Architecture / SOLID)
-
-Les couches ne dependent que vers l'interieur, jamais vers l'exterieur :
+## Project structure
 
 ```
-handlers/  web/  →  application/  →  domain/   (0 dependance framework)
-infrastructure/   →  domain/                    (adaptateurs des ports)
-main.go           =  composition root (seul lieu qui assemble tout)
+.
+├── app.go                  # composition root: stores, services, handlers
+├── app_server.go           # HTTP mux, middleware, graceful shutdown
+├── main.go                 # flags and the thin startup wrapper
+├── wiring.go               # LLM decorators, provider seeding, helpers
+├── config.yaml             # models, cache, routing, classifier
+├── domain/
+│   ├── chat/               # ChatRequest, StreamOptions, EnrichmentService
+│   ├── config/             # ChatConfig, validation, JSON Schema builder
+│   ├── embedding/          # embedding request/response, choices
+│   ├── errs/               # typed error taxonomy and stable codes
+│   ├── llm/                # LLMProvider port, result, ProviderError
+│   ├── monitoring/         # metrics snapshot types
+│   ├── project/            # Project and APIKey entities
+│   ├── provider/           # Provider and catalog model entities
+│   ├── routing/            # tier rules, failure classification, cooldown keys
+│   └── shared/             # cache, ID and repository contracts
+├── application/
+│   ├── auth/  catalog/  chat/  config/  embedding/
+│   ├── entity/             # generic CRUD use case
+│   ├── project/            # projects and API keys
+│   └── provider/
+├── infrastructure/
+│   ├── config/  metrics/   # configuration loading, metrics collection
+│   ├── *_store.go          # SQLite repositories
+│   ├── cached*.go          # repository and LLM caches
+│   ├── bifrost*.go         # Bifrost adapters and conversions
+│   ├── routing*.go         # tier ladder and failover
+│   ├── onnx*.go            # ONNX embeddings, chat and tokenizers
+│   └── jsonimport.go       # legacy JSON → SQLite migration
+├── handlers/               # OpenAI-compatible HTTP delivery
+│   ├── chat/  embeddings/  models/  httpx/
+├── web/                    # HTMX controllers per feature
+│   ├── templates/  static/
+├── docs/                   # embedded OpenAPI document
+├── tests/                  # end-to-end delivery tests
+└── tools/caps/             # readability cap checker
 ```
 
-* **DIP** : `handlers/ports.go` et `web/ports.go` declarent, cote consommateur, les interfaces etroites dont chaque couche delivery a besoin ; les cas d'usage concrets sont injectes depuis `main.go`, jamais references par la presentation. `main.go` ne manipule que les ports `domain`, pas les classes SQLite.
-* **ISP** : chaque port ne porte que les methodes reellement utilisees (ex. `ChatCompletion` = `Send` + `Stream`, `ConfigQuerier` = `Active` + `List`) ; cote domaine, `LLMProvider` et `StreamingLLMProvider` sont separes : le streaming est une capacite, pas une obligation.
-* **OCP** : les decorateurs composable (cache de repositories, cache de reponses LLM, routeur de chat, routeur d'embeddings) enveloppent un port sans le modifier ; activer ou remplacer une brique se fait par wiring, pas par edition du code existant.
-* **SRP** : entites et regles metier dans `domain/`, orchestration dans `application/`, technique dans `infrastructure/`, presentation dans `handlers/` et `web/`, assemblage dans `main.go`.
-* **LSP** : chaque adaptateur (SQLite, cache, routeur, Bifrost, ONNX) remplace un port sans effet de bord surprise — les tests de contrat l'exercent sur les memes enregistrements que la production.
+## Getting started
 
----
+### Requirements
 
-## Demarrage
+- Go 1.26 or newer.
+- Optional: Podman or Docker with Compose for the container workflow.
+- Optional: a local Ollama instance for the default model.
 
-### 1. Build et Run Local
+### Build and run
 
 ```bash
-# Compiler
+# Build the binary
 make build
 
-# Executer (port : BRIDGE_PORT du .env, defaut 4000 — UI sur http://localhost:4000)
+# Run (port from BRIDGE_PORT in .env, otherwise 8080)
 make run
 
-# Ou directement (idem ; "--port" force une valeur differente)
-go run . --config config.yaml
+# Or run directly, forcing a port
+go run . --config config.yaml --port 4000
 ```
 
-### 1b. Interface Web (HTMX)
+The startup order is: load `config.yaml`, download missing ONNX artifacts
+(non-blocking), open and migrate SQLite, import legacy JSON, build the stores
+and use cases, seed the local providers, then serve HTTP with graceful
+shutdown.
 
-L'application embarque une UI rendue cote serveur en HTMX (accessible a `http://localhost:4000`, port `BRIDGE_PORT` du `.env`) :
+### Web UI
 
-| Route | Methode | Fonction |
+The HTMX interface is available at `http://localhost:4000` when
+`BRIDGE_PORT=4000` (the compose default), or `http://localhost:8080` when no
+port is configured.
+
+| Route | Method | Purpose |
 |---|---|---|
-| `/` | GET | Page de discussion (envoi de message vers le modele selectionne) |
-| `/chat/send` | POST | Envoie le message + historique, retourne les bulles (fragment HTMX) |
-| `/models` | GET | Liste des modeles (config.yaml + catalogue + configurations) |
-| `/models` | POST | Ajoute un modele au catalogue |
-| `/models/{id}` | DELETE | Retire un modele du catalogue |
-| `/providers` | GET/POST | Liste / cree des providers |
-| `/providers/{id}` | POST/DELETE | Modifie / supprime un provider |
-| `/providers/{id}/edit` | GET | Formulaire d'edition (fragment HTMX) |
-| `/projects` | GET/POST | Liste / cree des projets |
-| `/projects/{pid}` | GET | Detail projet : configurations + API keys |
-| `/projects/{pid}/configs` | POST | Cree une configuration dans le projet |
-| `/projects/{pid}/configs/{cid}` | POST/DELETE | Modifie / supprime une configuration |
-| `/projects/{pid}/configs/{cid}/activate` | POST | Active une configuration (exclusivite par projet) |
-| `/projects/{pid}/configs/{cid}/duplicate` | POST | Duplique une configuration |
-| `/projects/{pid}/configs/{cid}/edit` | GET | Formulaire d'edition (fragment HTMX) |
-| `/projects/{pid}/keys` | POST | Cree une cle API (secret affiche une seule fois) |
-| `/projects/{pid}/keys/{kid}` | DELETE | Revoque une cle API |
-| `/configs` | GET | Redirige vers `/projects` (ancienne URL) |
+| `/` | GET | Chat page |
+| `/chat/send` | POST | Send a message, return HTMX bubbles |
+| `/models` | GET/POST | List or add catalog models |
+| `/models/{id}` | DELETE | Remove a catalog model |
+| `/providers` | GET/POST | List or create providers |
+| `/providers/{id}/edit` | GET | Provider edit fragment |
+| `/providers/{id}` | POST/DELETE | Update or delete a provider |
+| `/projects` | GET/POST | List or create projects |
+| `/projects/{pid}` | GET | Project detail: configurations and keys |
+| `/projects/{pid}/configs` | POST | Create a configuration |
+| `/projects/{pid}/configs/{cid}` | POST/DELETE | Update or delete a configuration |
+| `/projects/{pid}/configs/{cid}/activate` | POST | Activate one configuration per project |
+| `/projects/{pid}/configs/{cid}/duplicate` | POST | Duplicate a configuration |
+| `/projects/{pid}/configs/{cid}/edit` | GET | Configuration edit fragment |
+| `/projects/{pid}/keys` | POST | Create an API key (secret shown once) |
+| `/projects/{pid}/keys/{kid}` | DELETE | Revoke an API key |
+| `/configs` | GET | Redirect to `/projects` (legacy URL) |
+| `/monitoring` | GET | Monitoring dashboard |
+| `/monitoring/stats` | GET | Auto-refreshing HTMX fragment |
+| `/monitoring/metrics.json` | GET | JSON metrics snapshot |
+| `/health/liveness` | GET | Liveness probe |
+| `/health/readiness` | GET | Readiness probe |
+| `/health/test_connection` | GET | Provider connectivity check |
 
-Les configurations (provider, modele, base URL, cle API, system prompt, temperature, top_p, max_tokens, penalties, format de reponse) sont persistees dans `data/configs.json` et rattachees a un projet (`data/projects.json`). Les clefs API sont stockees sous forme d'empreinte SHA-256 dans `data/apikeys.json` (le secret en clair n'est jamais persistible). La navigation est propulsee par `hx-boost` (SPA-like) et les mises a jour par swaps HTMX (`innerHTML`, `outerHTML`, OOB). Le **system prompt et tous les parametres de generation de la configuration selectionnee** sont transmis au SDK Bifrost lors du chat : le system prompt est prependu comme message `system`, et les parametres partent dans les `ChatParameters` (temperature, top_p, max_tokens, penalties, response_format).
+The UI stays in French; code, comments and developer documentation are in
+English.
 
-### 2. Tests
+## Testing and CI
 
 ```bash
-make test
+make test        # fast integration suite: go test ./tests/ -v -count=1
+make test-all    # every package: go test ./... -count=1
+make test-race   # every package with the race detector
+make vet         # go vet ./...
+make caps        # file/function/nesting limits
+make ci          # fmt + vet + race tests + build
 ```
 
-### 3. Docker Compose (Passerelle Autonome)
+The CI workflow (`.github/workflows/ci.yml`) runs formatting, `go vet`, the
+readability caps, race tests and a full build on every push and pull request.
 
-La passerelle n'a **aucune dependance externe** : la persistance est un fichier SQLite (`data/bridge.db`) et le cache
-est local au processus (en memoire). Postgres et Redis ont ete supprimes.
+### Readability caps
 
-`compose.yml` ne declare donc qu'un service, `gateway`. Le `Dockerfile` est **multi-stage** : une etape `golang`
-cross-compile le binaire Linux depuis les sources (`CGO_ENABLED=0`), et le runtime est une image **Debian** minimale
-(glibc + `ca-certificates`). Aucun artefact local ignore par git n'est requis — ni binaire pre-compile, ni
-`certs/`, ni `models/` : un clone propre construit l'image.
+Production Go files must obey:
 
-> **Pourquoi Debian et pas `scratch` ?** Le moteur ONNX local charge son runtime avec `purego`, dont le chemin
-> sans CGO importe dynamiquement `libdl.so.2` / `libc.so.6` : le binaire est donc **lie dynamiquement a la glibc**
-> et ne demarre pas sur une base vide (erreur `missing dynamic library`). Le driver SQLite utilise reste **pur Go**
-> (`modernc.org/sqlite`), donc `CGO_ENABLED=0` suffit — pas de compilateur C dans l'image.
+- at most **300 lines** per file;
+- at most **40 lines** per function;
+- at most **3 nested control-flow levels**.
 
-> **Pourquoi un builder `golang:*-bookworm` et pas `golang:*-alpine` ?** Comme le binaire est lie dynamiquement,
-> l'editeur de liens Go y inscrit l'**interpreteur ELF** choisi *sur la machine de build* : il part du loader
-> glibc de la cible (`/lib64/ld-linux-x86-64.so.2`, `/lib/ld-linux-aarch64.so.1`) et bascule sur celui de musl
-> (`/lib/ld-musl-<arch>.so.1`) des qu'il ne le trouve pas — c'est le cas dans Alpine. Un builder Alpine produit
-> donc un binaire qui reclame `/lib/ld-musl-x86_64.so.1` et qui, copie dans l'image Debian, ne demarre plus :
-> `exec /bridge-gateway: no such file or directory` (ENOENT sur l'interpreteur, pas sur le binaire). Le builder
-> est donc glibc, comme le runtime, et l'etape runtime **execute le binaire une fois au build** (`--help`) pour
-> qu'un desaccord d'architecture/interpreteur casse le build au lieu du deploiement.
+`tools/caps` enforces all three. Tests are excluded from the size caps.
 
-> **Reseau avec Ollama** : dans le conteneur, `localhost` designe le conteneur lui-meme. Pour atteindre l'Ollama de
-> votre machine hote, le service `gateway` expose `host.docker.internal` et positionne
-> `OLLAMA_HOST=http://host.docker.internal:11434`. L'UI prefiltre donc automatiquement la Base URL
-> `http://host.docker.internal:11434` pour le provider `ollama` en environnement conteneur (variable
-> `OLLAMA_HOST`, defaut `http://localhost:11434` en lancement natif avec `make run`).
+## Docker Compose
 
-| Service   | Port publie | Role |
+The gateway is self-contained: SQLite for persistence and an in-memory cache.
+`compose.yml` declares a single `gateway` service. The Dockerfile is
+multi-stage: a glibc `golang` builder cross-compiles the binary, and a minimal
+Debian runtime provides glibc and CA certificates.
+
+> **Why Debian and not `scratch`?** The local ONNX engine loads its runtime with
+> `purego`; the no-CGO path imports `libdl.so.2` and `libc.so.6`, so the binary
+> is dynamically linked against glibc. SQLite itself uses the pure-Go
+> `modernc.org/sqlite` driver, so `CGO_ENABLED=0` is still sufficient.
+
+> **Why a glibc builder and not Alpine?** The Go linker records the ELF
+> interpreter of the build host. An Alpine builder records the musl loader,
+> which the Debian runtime does not have, and the container fails with
+> `exec /bridge-gateway: no such file or directory`. The runtime stage also
+> runs the binary once during the build so an interpreter or architecture
+> mismatch fails the build instead of the deployment.
+
+```bash
+make docker-up      # build and start
+make docker-logs    # follow logs
+make docker-down    # stop
+make docker-reset   # remove volumes and rebuild
+```
+
+`compose.yml` publishes `${BRIDGE_PORT:-4000}` on the host and listens on port
+8080 inside the container (the existing service contract). It mounts
+`config.yaml` read-only and `./data` for SQLite. `.env` is optional (`required: false`), so a clean clone starts without
+secrets; set `BIFROST_MASTER_KEY` before exposing the service.
+
+Container networking: `localhost` inside the container is the container
+itself. To reach Ollama on the host, compose sets
+`OLLAMA_HOST=http://host.docker.internal:11434` and adds the
+`host.docker.internal:host-gateway` mapping.
+
+## Render deployment
+
+`render.yaml` describes a single Docker Web Service. It is optional: Render can
+auto-detect the `Dockerfile`. The manifest sets `BRIDGE_PORT=4000`,
+`ONNX_AUTO_DOWNLOAD=1`, and leaves `BIFROST_MASTER_KEY` as a secret to enter in
+the Render UI. Update `OLLAMA_HOST` for the network where Ollama runs.
+
+| Data | Where | How |
 |---|---|---|
-| **gateway**   | `4000`  | Passerelle Bridge (UI + API OpenAI) |
+| SQLite database | `/tmp/bridge-gateway.db` or a persistent disk | `BRIDGE_DB` or `--db` |
+| Master key | Render environment | `BIFROST_MASTER_KEY` (never committed) |
+| Model settings | `config.yaml` baked into the image | `COPY config.yaml /config.yaml` |
+| ONNX artifacts | Downloaded at first start | `ONNX_AUTO_DOWNLOAD=1`, or pre-provision `models/onnx/` |
+| Ollama endpoint | Render environment or host DNS | `OLLAMA_HOST` |
 
-```bash
-# Demarrer (build image + deps)
-make docker-up
+`BRIDGE_PORT` controls both the Render service port and the default listen
+port. An explicit `--port` flag wins over the environment.
 
-# Logs
-make docker-logs
+## Persistence and cache
 
-# Arreter
-make docker-down
+**SQLite.** All persistence goes through one file (`data/bridge.db` by default,
+override with `--db`). The schema is created at startup and legacy JSON files
+from `data/` are imported idempotently: imported files are renamed to
+`.imported`, existing IDs are never overwritten, and re-running the import does
+not duplicate records.
 
-# Reinitialiser completement (volumes inclus)
-make docker-reset
+**In-memory cache.** Repository reads use a short TTL (15 s by default) so UI
+edits become visible quickly. LLM responses use a separate cache (5 min by
+default). Both are bounded and swept in-process; disabling either is a
+configuration change.
+
+**API keys.** Only the SHA-256 hash of a key is stored. The plaintext secret is
+shown once when the key is created.
+
+## Tier routing and failover
+
+Each project configuration carries an optional tier:
+
+```
+fast < balanced < frontier
 ```
 
-### 4. Render.com deployment
+When routing is enabled, a small local model classifies the conversation
+(`fast` for short factual tasks, `balanced` for multi-step reasoning and code,
+`frontier` for ambiguous design work or long contexts). The verdict is applied
+only above `min_confidence`; otherwise the active configuration is kept.
 
-Bridge Gateway is a single Go binary with SQLite and a memory cache only, so a
-Render **Web Service** is enough: no database, cache, or worker box is required.
+On a provider failure, the request moves up one tier and the failed tier is
+cooled down for `cooldown`. Failure reasons are classified in
+`domain/routing`: rate limits, quota exhaustion, context overflow, transient
+outages and rejected credentials are retryable; validation errors and
+cancellation are not. Routing is disabled by default in `config.yaml`.
 
-#### One-click: Render composition file
+## Monitoring
 
-Add this file to the repository root as `render.yaml`. Replace `USERNAME` with your
-GitHub username and set the required environment variables in the Render UI.
+`/monitoring` renders an HTMX dashboard with traffic, latency percentiles,
+route counts, recent errors, Go runtime statistics and LLM calls.
+`/monitoring/metrics.json` returns the same snapshot for scraping or uptime
+checks. Metrics are collected in-process; no agent is required.
 
-```yaml
-services:
-  - type: web
-    name: bridge-gateway
-    runtime: docker
-    buildContext: .
-    envVars:
-      - key: BRIDGE_PORT
-        value: "4000"
-      - key: BIFROST_MASTER_KEY
-        sync: false
-      - key: ONNX_AUTO_DOWNLOAD
-        value: "1"
-      - key: OLLAMA_HOST
-        value: http://host.docker.internal:11434
-      - key: OLLAMA_HOST
-        value: http://10.0.0.1:11434
-        generated: true
-```
+## Local ONNX models
 
-The generated `OLLAMA_HOST` lines are removed on Render, so drop them if you do not
-run a local Ollama. `models/` is gitignored and not part of the image, so leave
-`ONNX_AUTO_DOWNLOAD` enabled (`1`) to fetch the ONNX artifacts on first start, or
-set it to `0` when the deploy must stay offline.
+### Embeddings
 
-#### Manual Dockerfile (optional)
+The default embedding model is `onnx/all-MiniLM-L6-v2`. Other local models are
+discovered under `models/onnx/` (a directory containing `model.onnx` and
+`vocab.txt`). Requests are routed by the model name:
 
-The included `Dockerfile` compiles the gateway from source and ships it in a
-small Debian (glibc) image — not `scratch`, because the purego-loaded ONNX
-runtime links the binary against `libdl`/`libc`. Render's auto-detect uses the
-same shape: a `Dockerfile` and this repository as the build context — no
-prebuilt binary or host CA bundle is required, and `models/` stays out of the
-image (downloaded at first start).
+- `onnx/...` → local ONNX embedder;
+- `local/...` → deterministic local embedder (no model files needed);
+- anything else → the configured Bifrost provider.
 
-The builder is glibc-based on purpose, and the runtime stage runs the binary
-once: see `Dockerfile` for why an Alpine builder produces an image that dies
-with `exec /bridge-gateway: no such file or directory`.
+Missing artifacts are downloaded on first start. `ONNX_AUTO_DOWNLOAD=0`
+disables all downloads for offline deployments, and `ONNX_RUNTIME_LIB` points
+to a non-default ONNX Runtime shared library.
 
-```dockerfile
-# Builder: glibc, like the runtime — the Go linker records the ELF interpreter
-# of the *build* host, and an Alpine/musl builder records a musl loader that
-# the Debian runtime below does not have.
-FROM --platform=$BUILDPLATFORM golang:1.26-bookworm AS build
-ARG TARGETOS
-ARG TARGETARCH
-WORKDIR /src
-COPY go.mod go.sum ./
-RUN go mod download
-COPY . .
-RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
-    go build -trimpath -ldflags="-s -w" -o /out/bridge-gateway .
+### Chat
 
-# Runtime: glibc is required (purego dlopen()s libdl/libc for the ONNX engine).
-FROM --platform=$TARGETPLATFORM debian:bookworm-slim
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+The local chat engine uses the SmolLM2 ONNX export under
+`models/onnx/chat/smollm2-135m-instruct/` (`model.onnx`, `config.json`,
+`generation_config.json`, `tokenizer.json`, `tokenizer_config.json`). It
+supports greedy and temperature/top-p sampling, streaming and end-of-sequence
+detection. A missing artifact produces an explicit error naming the file.
 
-COPY config.yaml /config.yaml
-COPY --from=build /out/bridge-gateway /bridge-gateway
+## API examples
 
-# Fail the build, not the deploy, if the binary cannot run in this image.
-RUN timeout 30 /bridge-gateway --help > /dev/null 2>&1 \
-    || { echo "ERROR: /bridge-gateway cannot run in this image (wrong architecture or missing ELF interpreter)"; exit 1; }
-
-ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
-
-EXPOSE 4000
-
-ENTRYPOINT ["/bridge-gateway"]
-CMD ["--config", "/config.yaml", "--port", "4000"]
-```
-
-#### Data & secrets on Render
-
-| What | Where | How |
-| --- | --- | --- |
-| SQLite database | `/tmp/bridge-gateway.db` (fast local disk) or a persistent mount | `BRIDGE_DB` or `--db`; do not mount the repo `data/` directory unless you copy it into the image. |
-| Master key | Render **Environment** variables | `BIFROST_MASTER_KEY` (in clear text; it never leaves the process). |
-| Model parameters | `config.yaml` baked at build time; ONNX assets downloaded at first start | `config.yaml` is `COPY`ed into the image; `models/onnx/` is gitignored, so the ONNX artifacts are fetched at runtime (`ONNX_AUTO_DOWNLOAD`). |
-| Ollama endpoint | Render **Environment** variables or host DNS | `OLLAMA_HOST` (blank = `http://localhost:11434`; Render internal DNS uses `host.docker.internal`, typically `10.0.0.1:11434`). |
-
-`BRIDGE_PORT` decides the published port and the listening address: Render
-resolves it from the Web Service environment or `render.yaml`, and the process
-falls back to 8080 when neither is set. A `--port` flag passed on the start
-command still wins over everything else, so pre-warm a preview deployment with
-`--port 4000` if you need to pin a different port.
-
-### 5. Persistance et cache
-
-**SQLite.** Toute la persistance passe par un fichier unique (`data/bridge.db` par defaut, surchargeable via
-`--db`). Le schema est cree au demarrage (`Migrate`) et l'import des anciens fichiers JSON de `data/` est automatique
-et idempotent au premier lancement : chaque fichier migre est renomme en `.imported`, et relancer l'import ne
-duplique rien. Pour ignorer l'import, passer `--import-json ""`.
-
-> Un projet existant garde ses donnees : l'import est execute **avant** le seed, donc les providers et modeles deja
-> presents dans les JSON sont conserves (les 8 providers par defaut ne sont ajoutes que sur une base vide).
-
-**Cache en memoire.** Deux caches independants, tous deux configurables dans la section `cache` de `config.yaml` et
-desactivables (`enabled: false`) sans toucher au code :
-
-| Cache | TTL par defaut | Contenu |
-|---|---|---|
-| `cache.stores` | `15s` | Lectures de repositories : cles API par digest, config active, projets |
-| `cache.llm_responses` | `5m` | Reponses LLM identiques (evite un appel reseau au provider) |
-
-Les entrees expirent (TTL) et les plus anciennes sont evincees au-delà de `max_entries`. Les ecritures invalident les
-cles concernees, et les erreurs provider ne sont **jamais** mises en cache.
-
-### 6. Routage par tier et bascule sur saturation
-
-Desactive par defaut (`routing.enabled: false`). Quand il est actif, chaque requete part vers le modele le moins
-couteux qui suffise, et remonte d'un cran si le fournisseur ne peut pas servir.
-
-**Declencher le routage.** Attribuer un *tier* a chaque configuration du projet depuis l'onglet Projects
-(`fast` < `balanced` < `frontier`). Une configuration sans tier reste utilisable et sert de point de depart, mais ne
-figure pas dans l'echelle. Le champ est stocke en JSON dans `chat_configs` : aucun `ALTER TABLE` n'est necessaire.
-
-**Deux mecanismes, la meme direction.**
-
-- Le **classifieur** (un petit modele local) evalue la complexite de la conversation *entiere*, pas seulement le dernier
-  message : une conversation qui s'allonge exige naturellement plus de puissance. Il ne peut ni descendre sous le tier
-  choisi explicitement par l'utilisateur, ni envoyer une requete complexe vers un modele trop faible.
-- La **saturation** fait monter d'un cran quand le provider echoue :
-
-  | Declencheur | Exemple | Remede |
-  |---|---|---|
-  | `rate_limit` | HTTP 429, quota epuise | un autre provider a son propre quota |
-  | `model_unavailable` | HTTP 404 sur le nom du modele | un autre tier peut le servir |
-  | `context_length` | HTTP 400, historique trop long | un modele plus grand |
-  | `unavailable` | HTTP 5xx, timeout, reseau | panne isolee a un provider |
-  | `auth` | HTTP 401 / 403 | **peut masquer une mauvaise cle API** — reste visible dans les logs |
-
-  Un 4xx attribuable a la requete elle-meme (JSON invalide, mauvais chemin d'API) **n'entraine aucune bascule** : aucun
-  autre modele ne la rendrait valide, et multiplier les appels ne ferait qu'aggraver la situation.
-
-**Ce qui ne bascule pas.** Seuls `provider`, `model`, `base_url` et `api_key` proviennent du tier cible. Le system
-prompt, la temperature, le `top_p`, les penalties et le format de reponse restent ceux de la configuration active :
-changer de modele ne doit pas changer silencieusement le comportement d'une conversation en cours.
-
-**Cooldown.** Apres un echec, le tier reste ecarte pendant `routing.cooldown` (`60s` par defaut), ce qui evite de
-rebruler un modele mort sur chaque requete. La cle est `provider/model` : corriger la configuration vers un autre
-modele la rend de nouveau eligible immediatement. Un cooldown qui viderait toute l'echelle est ignore, pour ne pas
-preferer ne pas repondre.
-
-**Configuration.**
-
-```yaml
-routing:
-  enabled: true
-  min_confidence: 0.6    # sous ce seuil, la config active est conservee
-  cooldown: "60s"        # 0 desactive la memorisation des saturations
-  max_attempts: 0        # 0 = toute l'echelle
-  max_retries: 1         # reessais Bifrost par appel (2 sinon)
-  classifier:
-    provider: ollama
-    model: granite4:tiny-h   # voir l'avertissement de latence ci-dessous
-    max_input_chars: 6000
-    max_tokens: 64
-    timeout: "10s"           # au-dela, la precision est sacrifiee, pas la requete
-```
-
-**Latence : le point d'attention.** Le classifieur est un appel LLM supplementaire, sur **chaque requete qui n'est
-pas un hit de cache**. Mesure sur cette machine, `gemma4:e4b` comme classifieur a coute **~25 s** par requete, ce qui
-est inacceptable. Deux leviers :
-
-1. mettre un **vraiment petit modele** en `classifier.model` (`granite4:tiny-h`, `qwen2.5`, `smollm2`) — c'est le
-   levier principal ;
-2. fixer `classifier.timeout` : au-dela, le classifieur est abandonne et la configuration active est conservee. La
-   reponse est alors servie au prix de la precision du routage, jamais au prix de la perte de la requete.
-
-Le cache de reponses absorbe les repetitions exactes : la cle est calculee sur la configuration active, donc un hit
-evite a la fois la classification et toute l'echelle de bascule.
-
-**Observabilite.** Les decisions sont journalisees, et la reponse HTTP renvoie le modele qui a **reellement** produit
-le texte (champ `model`), pas celui de la configuration demandee. L'UI affiche « Reponse produite par ... » des que les
-deux different.
-
----
-
-### 1c. Modeles d'embedding locaux
-
-Le testeur d'embeddings (`/embeddings-test`) et l'API `/v1/embeddings` choisissent leur moteur d'apres le champ
-`model` de la requete (jamais par la configuration du projet). Trois modeles sont curates d'entree :
-
-| `model` | Moteur | Dimensions | Pre-requis |
-|---|---|---|---|
-| `local-embedding` | Vectoriseur Go embarque dans le binaire | 384 | aucun |
-| `nomic-embed-text` | Ollama (`localhost:11434`) via Bifrost | 768 | `ollama pull nomic-embed-text` |
-| `onnx/all-MiniLM-L6-v2` | Runtime ONNX in-process (purego, sans CGO) | 384 | artefacts sous `models/onnx/` (ci-dessous) |
-
-`models/onnx/` est ignore par git : **au premier lancement, les artefacts manquants sont telecharges
-automatiquement** (bibliotheque ONNX pour la plateforme, modeles d'embedding, modele de chat — environ 190 Mo,
-logues `[onnx] ...` puis en place de facon atomique). Un echec reseau n'empeche jamais le serveur de demarrer :
-il est journalise, le prochain demarrage reprend, et chaque choix ONNX reste une erreur explicite citant le fichier
-manquant. Desactiver avec `ONNX_AUTO_DOWNLOAD=0` (artefacts fournis a la main ou environnement hors-ligne).
-
-En pilotage manuel (meme sources que celles du manifeste), adapter l'archive ONNX Runtime a la plateforme
-(`osx-arm64`, `linux-x64`, `win-x64` ; la bibliotheque doit etre en **1.23.x**, l'API C attendue est la version 23) :
-
-```bash
-mkdir -p models/onnx/lib
-# libonnxruntime.{dylib,so,dll} depuis les releases microsoft/onnxruntime (v1.23.0), placee dans models/onnx/lib/
-curl -L -o models/onnx/model.onnx https://huggingface.co/Xenova/all-MiniLM-L6-v2/resolve/main/onnx/model_quantized.onnx
-curl -L -o models/onnx/vocab.txt  https://huggingface.co/Xenova/all-MiniLM-L6-v2/resolve/main/vocab.txt
-```
-
-Chemins surchargeables : `ONNX_RUNTIME_LIB`, `ONNX_MODEL_PATH`, `ONNX_VOCAB_PATH`, `ONNX_MAX_SEQ_LEN` (defaut 128).
-Sans artefacts, le choix ONNX rend une erreur explicite citant le fichier manquant (400 sur l'API, toast sur le
-testeur) — jamais de repli silencieux vers un provider distant. `go test ./...` saute le test d'integration ONNX
-tant que les artefacts sont absents.
-
-**Ajouter des modeles depuis l'UI.** La page `Modeles` propose un champ **Type** (`chat` par defaut,
-`embedding`) : un modele declare `embedding` rejoint le select du testeur et l'API `/v1/embeddings` — le routeur
-le resout vers son moteur d'apres le provider enregistre (recommande : `local`, `onnx` ou `ollama`). Un modele de
-chat, meme homonyme, ne detourne jamais un appel d'embedding.
-
-**Plusieurs modeles ONNX locaux.** Chaque repertoire de `models/onnx/` contenant `model.onnx` + `vocab.txt`
-devient un modele selectable sous l'id `onnx/<repertoire>` : decouvert automatiquement au demarrage, seme au
-catalogue (type `embedding`), donc visible sur la page `Modeles`, dans le testeur et depuis l'API :
-
-```bash
-mkdir -p models/onnx/paraphrase-MiniLM-L3-v2
-# vocab.txt : memes vocabulaires BERT pour les MiniLM, copie du modele par defaut si absent
-curl -L -o models/onnx/paraphrase-MiniLM-L3-v2/model.onnx https://huggingface.co/Xenova/paraphrase-MiniLM-L3-v2/resolve/main/onnx/model_quantized.onnx
-```
-
-Le modele par defaut (`onnx/all-MiniLM-L6-v2`) reste sur les chemins plats ci-dessus (variables
-`ONNX_MODEL_PATH` / `ONNX_VOCAB_PATH`) ; la convention par repertoire ne vaut que pour les autres modeles. Un
-identifiant inconnu rend une erreur citant le repertoire attendu, et chaque modele charge a sa session en memoire
-(paresseusement, a son premier appel).
-
----
-
-### 1d. Modeles de chat ONNX locaux
-
-Un repertoire `models/onnx/chat/<id>/` contenant `model.onnx` + `tokenizer.json` + `config.json` devient un
-**mode de chat executable localement**, sous le provider `onnx` :
-
-* **Decouverte et catalogue** : les modeles trouves sont semes au catalogue (type `chat`, provider `onnx`) et
-  proposés sur la page `Modeles` ; creer une configuration avec provider `onnx` et ce modele suffit a router la
-  conversation localement (le routeur choisit le moteur avant Bifrost, sans bascule silencieuse).
-* **Moteur** : prefill puis decode avec cache KV, echantillonnage temperature / top_p (argmax si temperature a 0),
-  arret sur le `eos_token_id` de `generation_config.json` ; tokenizer BPE pur Go lu dans `tokenizer.json` (les deux
-  serialisations de merges sont acceptees). Streaming SSE natif, fragment par fragment.
-* **Template de chat** : applique automatiquement (system par defaut, cadre `role`), les identifiants de la
-  configuration active restent ignores — le modele est executé in-process, sans cle ni URL.
-* **Premier lancement** : l'ensemble (modele + runtime) fait partie du manifeste de telechargement automatique
-  de la section 1c (~190 Mo au total).
-
-Le modele de reference est `smollm2-135m-instruct` (135 M de parametres, ~131 Mo quantise). Fenetre et budget
-reglables par `ONNX_CHAT_MAX_SEQ_LEN` (defaut 2048) et `ONNX_CHAT_MAX_NEW_TOKENS` (defaut 256).
-
----
-
-## Exemple d'Utilisation
-
-### Requete sur la passerelle (Port `4000`)
-
-Deux modes d'authentification sont supportes :
-
-* **Master key** (globale, via `BIFROST_MASTER_KEY`) — requete directe avec routage et enrichissement standard :
+### Chat completion
 
 ```bash
 curl -X POST 'http://localhost:4000/v1/chat/completions' \
--H 'Content-Type: application/json' \
--H 'Authorization: Bearer cpZ75uPavZpwRLMjD0dj' \
--d '{
+  -H 'Authorization: Bearer sk-bridge-XXXX' \
+  -H 'Content-Type: application/json' \
+  -d '{
     "model": "gemma4:e4b",
-    "messages": [
-      {"role": "user", "content": "Explique-moi le fonctionnement de BifrostAI."}
-    ]
-}'
+    "messages": [{"role": "user", "content": "Explain goroutines in one paragraph."}]
+  }'
 ```
-
-* **Cle de projet** (create dans l'UI, `sk-bridge-...`) — reelle completions via la **configuration active du projet**, sans enrichissement manuel :
-
-```bash
-curl -X POST 'http://localhost:4000/v1/chat/completions' \
--H 'Content-Type: application/json' \
--H 'Authorization: Bearer sk-bridge-XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX' \
--d '{
-    "model": "gemma4:e4b",
-    "messages": [{"role": "user", "content": "Quel est ton nom ?"}]
-}'
-```
-
-curl -X POST 'http://localhost:4000/v1/chat/completions' \
--H 'Content-Type: application/json' \
--H 'Authorization: Bearer sk-bridge-5a09f2a7b972bd4da3705a18c10b8c5d5166514c2225f3935c3a3c22e9fcb6e9' \
--d '{
-    "model": "gemma4:e4b",
-    "messages": [{"role": "user", "content": "Quel est ton nom ?"}]
-}
-
-> La cle de projet doit etre copiee des sa creation : seul son prefixe (`sk-bridge-XXXXXXXX…`) et son empreinte SHA-256 sont conserves.
-
-### Reponse
-
-```json
-{
-    "id": "chatcmpl-83d6a3332f460d947812b535",
-    "object": "chat.completion",
-    "created": 1791195410,
-    "model": "gemma4:e4b",
-    "choices": [
-        {
-            "index": 0,
-            "message": {"role": "assistant", "content": "Enriched request processed..."},
-            "finish_reason": "stop"
-        }
-    ],
-    "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
-}
-```
-
-### Routes de l'API standard OpenAI
-
-| Methode | Chemin | Role |
-| --- | --- | --- |
-| `POST` | `/v1/chat/completions` | Completion de chat, SSE si `stream: true` (auth `Bearer`) |
-| `POST` | `/v1/embeddings` | Vecteurs d'embedding (auth `Bearer`) |
-| `GET` | `/v1/models` | Liste des modeles connus |
-| `GET` | `/v1/models/{model}` | Detail d'un modele, insensible a la casse |
-| `GET` | `/health/liveness`, `/health/readiness`, `/health/test_connection` | Sondes JSON sans authentification |
-
-Toute route `/v1/...` exige une cle. Toute autre route `/v1/` repond `404` avec
-l'enveloppe d'erreur OpenAI, et non le texte brut de `net/http` :
-
-```bash
-curl http://localhost:4000/v1/models -H 'Authorization: Bearer sk-bridge-XXXX'
-# {"object":"list","data":[{"id":"gemma4:e4b","object":"model","created":1791195330,"owned_by":"ollama"}]}
-
-curl -X POST http://localhost:4000/v1/embeddings -H 'Authorization: Bearer sk-bridge-XXXX' \
-  -H 'Content-Type: application/json' -d '{"input":"bonjour","model":"onnx/all-MiniLM-L6-v2"}'
-# {"object":"list","data":[{"object":"embedding","index":0,"embedding":[...]}],"model":"onnx/all-MiniLM-L6-v2",...}
-
-curl -X POST http://localhost:4000/v1/embeddings -d '{}'
-# {"error":{"code":"invalid_api_key","message":"invalid or missing API key","param":null,"type":"authentication_error"}}
-```
-
-Les erreurs suivent le paquet `error` d'OpenAI (`message`, `type`, `param`, `code`).
-
-### Documentation API (Swagger)
-
-La specification OpenAPI 3 est **embarquee dans le binaire** et servie en local :
-
-| Chemin | Contenu |
-| --- | --- |
-| `GET /swagger` | Interface Swagger UI ("Try it out" inclus) |
-| `GET /openapi.yaml` | Specification OpenAPI 3 (`application/yaml`) |
-
-```bash
-curl http://localhost:4000/openapi.yaml | head -3
-# openapi: 3.0.3
-# info:
-#   title: Bridge Gateway API
-```
-
-Les deux routes sont sans authentification : la documentation decrit l'API, elle ne
-l'expose pas — chaque route `/v1/` reste protegee par sa propre cle. L'UI Swagger
-charge ses assets depuis un CDN (`unpkg`) ; la specification, elle, est servie en
-local et reste utilisable hors-ligne (Redoc, generateur de SDK : `npx @openapitools/openapi-generator-cli generate -i http://localhost:4000/openapi.yaml -g go`).
-
-Les requetes "Try it out" rappellent l'origine qui sert la page : la specification
-declare `:4000` (BRIDGE_PORT du `.env`, docker compose et `make run`) et `:8080`
-(repli sans `.env`), dont une seule — parfois aucune — repond selon le mode de
-demarrage. Parallelement, les routes `/v1/`,
-`/health/` et la documentation exposent les en-tetes CORS (preflight `OPTIONS`
-inclus) pour tout appel cross-origin de navigateur ; les routes de l'UI web,
-sans authentification, restent hors CORS.
 
 ### Streaming
 
-`"stream": true` bascule la meme route en SSE (`text/event-stream`), sans
-`/v1/chat/completions/stream` ni autre chemin : c'est le comportement attendu par
-les SDK.
-
 ```bash
 curl -N -X POST 'http://localhost:4000/v1/chat/completions' \
--H 'Content-Type: application/json' \
--H 'Authorization: Bearer sk-bridge-XXXX' \
--d '{"model":"gemma4:e4b","stream":true,"messages":[{"role":"user","content":"Raconte une histoire."}]}'
+  -H 'Authorization: Bearer sk-bridge-XXXX' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "gemma4:e4b",
+    "messages": [{"role": "user", "content": "Count from 1 to 5."}],
+    "stream": true,
+    "stream_options": {"include_usage": true}
+  }'
 ```
 
-La sequence des trames est celle d'OpenAI : une trame portant le role
-`assistant`, une trame par increment de texte, une trame de fin avec
-`finish_reason: "stop"`, puis `data: [DONE]`. Toutes les trames partagent le meme
-`id` et le meme `created`.
+The stream is server-sent events. The final usage frame is separate from the
+content frames, matching the OpenAI contract.
 
-`stream_options.include_usage` ajoute, juste avant `[DONE]`, une trame de
-consommation avec `choices` vide, comme chez OpenAI :
-
-```json
-{"id":"chatcmpl-…","object":"chat.completion.chunk","created":1791196744,
- "model":"gemma4:e4b","choices":[],
- "usage":{"prompt_tokens":10,"completion_tokens":10,"total_tokens":20}}
-```
-
-Le streaming traverse toute la chaine (cache, routeur, Bifrost) :
-
-* **cache** : un hit est redonne en un seul fragment, un miss est streamed puis
-  memorise. Une reponse interrompue n'est jamais memorisee ;
-* **routeur** : la bascule vers un tier superieur n'est possible que tant que le
-  client n'a recu aucun fragment. Au-dela, une coupure lui est annoncee dans une
-  trame d'erreur, car le texte est deja chez lui ;
-* **provider non streame** : la reponse est redonnee en un seul fragment, donc
-  toujours en SSE valide.
-
-Verifier avec le SDK officiel :
-
-```python
-from openai import OpenAI
-client = OpenAI(base_url="http://localhost:4000/v1", api_key="sk-bridge-XXXX")
-for chunk in client.chat.completions.create(model="gemma4:e4b", messages=[...], stream=True):
-    print(chunk.choices[0].delta.content or "", end="", flush=True)
-```
-
-### Sortie structuree (JSON mode et schemas)
-
-Le format de reponse se configure dans la configuration du projet, et une
-requete peut le surcharger. **La requete l'emporte toujours**, comme chez OpenAI.
-
-Trois formats sont acceptes, et `json_schema` exige un schema :
+### Embeddings
 
 ```bash
-# schema transmis par la requete
-curl -X POST 'http://localhost:4000/v1/chat/completions' \
--H 'Authorization: Bearer sk-bridge-XXXX' \
--H 'Content-Type: application/json' \
--d '{
-  "messages": [{"role":"user","content":"Ville et population"}],
+curl -X POST http://localhost:4000/v1/embeddings \
+  -H 'Authorization: Bearer sk-bridge-XXXX' \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"onnx/all-MiniLM-L6-v2","input":"The cat sleeps on the sofa."}'
+```
+
+### Models and errors
+
+```bash
+curl http://localhost:4000/v1/models -H 'Authorization: Bearer sk-bridge-XXXX'
+```
+
+```json
+{"object":"list","data":[{"id":"gemma4:e4b","object":"model","created":1791195330,"owned_by":"ollama"}]}
+```
+
+Errors use the OpenAI shape with a stable code:
+
+```json
+{"error":{"code":"invalid_api_key","message":"invalid or missing API key","param":null,"type":"authentication_error"}}
+```
+
+### OpenAPI
+
+The embedded spec is served at `/openapi.yaml`, and a documentation page is
+available at `/docs`.
+
+## Structured output
+
+`response_format` supports:
+
+- `text` — plain text;
+- `json_object` — JSON mode without a schema;
+- `json_schema` — strict schema, sent as `response_format.json_schema`.
+
+The UI's schema builder produces `additionalProperties: false` and a sorted
+`required` list. Strict mode is only advertised when every property is
+required, which is what OpenAI enforces.
+
+```json
+{
+  "model": "gemma4:e4b",
+  "messages": [{"role": "user", "content": "Return a person."}],
   "response_format": {
     "type": "json_schema",
     "json_schema": {
-      "name": "ville",
+      "name": "person",
+      "strict": true,
       "schema": {
         "type": "object",
-        "properties": {"ville": {"type":"string"}, "population": {"type":"integer"}},
-        "required": ["ville","population"],
+        "properties": {"name": {"type": "string"}},
+        "required": ["name"],
         "additionalProperties": false
       }
     }
   }
-}'
-
-# JSON valide, sans schema : {"type":"json_object"}
--d '{"messages":[...],"response_format":{"type":"json_object"}}'
+}
 ```
 
-La surcharge vaut aussi pour `temperature`, `top_p`, `max_tokens`,
-`max_completion_tokens`, `frequency_penalty` et `presence_penalty`. Elle est
-appliquee sur une copie de la configuration : la configuration enregistree n'est
-jamais modifiee par un appel, et le modele n'est jamais surcharge.
+## Provider configuration
 
-Un `response_format` invalide (type inconnu, schema manquant ou schema qui n'est
-pas un objet) est refuse en `400` avec `param: "response_format"`.
+Providers are stored in SQLite and can be managed from `/providers`. A provider
+has a name, a default base URL and an optional default API key. API keys may be
+environment placeholders:
 
-**Constructeur visuel.** Le formulaire de configuration expose un constructeur de
-schema : on declare les champs, et le serveur produit le JSON Schema qui sera
-envoye au provider.
+- `{env:VAR}`
+- `env:VAR`
+- `${VAR}`
+- `$VAR`
 
-Le tableau accepte **autant de lignes que necessaire** — le bouton « Ajouter un
-champ » en clone une ligne du `<template>`, chaque ligne a son bouton de
-suppression, et la numerotation est recalculee apres chaque ajout ou retrait
-(appariement de la case « obligatoire » par position de ligne). La logique vit
-dans le layout, en delegation sur `document`, donc elle survit aux swaps htmx :
-le `<template>` est reconstruit a chaque rechargement de la section, et les
-lignes deja saisies sont relues a l'edition.
+Configuration forms autofill the provider's URL and key, and the API key can be
+overridden per configuration. OpenAI-compatible private gateways and vLLM use
+the OpenAI protocol with a custom base URL.
 
-Colonnes disponibles par champ :
+## Configuration reference
 
-| Colonne        | Effet sur le schema                          |
-| -------------- | -------------------------------------------- |
-| Nom            | nom de la propriete                          |
-| Type           | `string`, `number`, `integer`, `boolean`, `object`, `array` |
-| Description    | `description`                                |
-| Obligatoire    | entre dans `required`                        |
-| Valeurs        | `enum` (liste separee par des virgules)      |
-| Min / Max      | `minLength`/`maxLength` (chaine) ou `minimum`/`maximum` (nombre), selon le type |
-| Motif          | `pattern` (chaine)                           |
-| Type d'element | `items.type` (tableau ; `string` par defaut) |
+`config.yaml` contains:
 
-Les contraintes ne sont ajoutees que si elles sont saisies, et une contrainte qui
-ne correspond pas au type du champ est ignoreee plutot que rejetee : changer le
-type d'un champ ne doit pas faire echouer la sauvegarde. Un schema dont la
-construction est invalide n'est pas enregistre, la validation de la
-configuration signalant alors que `json_schema` exige un schema.
+- `model_list` — gateway models exposed by `/v1/models`;
+- `general_settings.master_key` — master key, usually
+  `os.environ/BIFROST_MASTER_KEY`;
+- `cache.stores` and `cache.llm_responses` — TTL, max entries, enable flags;
+- `routing` — enable flag, classifier model, confidence threshold, cooldown,
+  attempts and Bifrost retries.
 
-La textarea « Schema JSON » permet de saisir directement un schema que le
-constructeur n'exprime pas (imbrication, unions, `oneOf`) ; **elle est
-prioritaire** quand elle est remplie.
+Environment variables:
 
-Les deux chemins convergent vers le meme schema : construit depuis le formulaire,
-stocke dans la configuration, ou fourni directement dans le `response_format`
-d'une requete API.
+| Variable | Default | Purpose |
+|---|---|---|
+| `BRIDGE_PORT` | `8080` (flag), `.env` overrides | Listen port; compose publishes it on the host |
+| `BRIDGE_DB` | `data/bridge.db` | SQLite file path (or use `--db`) |
+| `BIFROST_MASTER_KEY` | empty | Master key for API authentication |
+| `ONNX_AUTO_DOWNLOAD` | `1` | Download missing ONNX artifacts on first start |
+| `ONNX_RUNTIME_LIB` | platform default | ONNX Runtime shared library path |
+| `OLLAMA_HOST` | `http://localhost:11434` | Ollama endpoint for local providers |
 
-> **Un schema enregistre vaut declaration d'intention.** Si la configuration
-> porte un `response_schema` mais que le select « Format de reponse » est laisse
-> sur « aucun », le format effectif est **deduit** comme `json_schema` : le
-> schema est alors reellement transmis au provider. Le formulaire affiche
-> egalement la valeur effective a l'edition, pour ne pas laisser croire que le
-> schema est ignore. Un format choisi explicitement (`text`, `json_object`)
-> reste prioritaire — la deduction ne s'applique qu'en l'absence de format.
+CLI flags: `--config`, `--port`, `--db`, `--import-json`.
 
-> **Mode strict.** OpenAI impose qu'en mode `strict` *tous* les champs declares
-> soient requis. Le champ `strict` n'est donc annonce que si c'est vrai du schema
-> : un schema comportant un champ facultatif est envoye avec `strict: false`,
-> plutot que d'etre refuse par le provider.
+## Troubleshooting
 
-### Health Check
-
-```bash
-curl http://localhost:4000/health/liveness
-# {"status":"ok"}
-```
-
----
-
-## Configuration des Providers BifrostAI
-
-Le fichier `config.yaml` definit les modeles et les parametres de routage par defaut :
-
-```yaml
-model_list:
-  - model_name: gemma4:e4b
-    bifrost_params:
-      provider: ollama
-      model: gemma4:e4b
-```
-
-Les providers peuvent etre configures globalement dans `config.yaml` ou dynamiquement via l'interface `/providers` et `/projects` :
-
-* **Ollama** : Modele local par defaut (`gemma4:e4b`) sur `http://localhost:11434`
-* **OpenAI / Mistral / Anthropic / Groq / Google Gemini / Azure / Vertex**
-* **Passerelles compatibles OpenAI** : N'importe quelle API / proxy LLM respectant le protocole OpenAI avec une `baseURL` et `apiKey` personnalisees (support des variables d'environnement ex: `{env:SECRET_KEY}`).
+- **`invalid_api_key`** — create a key in the project UI and send it as
+  `Authorization: Bearer ...`.
+- **`onnx runtime not configured`** — install the ONNX Runtime shared library
+  or set `ONNX_RUNTIME_LIB`; for a fully offline deployment also set
+  `ONNX_AUTO_DOWNLOAD=0` and pre-provision `models/onnx/`.
+- **Ollama unreachable from a container** — use
+  `http://host.docker.internal:11434` (compose sets this automatically) instead
+  of `localhost`.
+- **Routing feels slow** — the classifier is called on every uncached request;
+  use a small, fast local model in `routing.classifier.model`.
+- **A tier keeps failing** — inspect `/monitoring` and the logs; the failing
+  tier is cooled down for `routing.cooldown` before it is retried.
