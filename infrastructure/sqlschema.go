@@ -17,6 +17,9 @@ const (
 	TableAPIKeys      = "api_keys"
 	TableProviders    = "providers"
 	TableCatalogModel = "catalog_models"
+	TableRAGDocuments = "rag_documents"
+	TableRAGChunks    = "rag_chunks"
+	TableRAGSettings  = "rag_settings"
 )
 
 // OpenDB ouvre le fichier SQLite avec le pragmas adaptes au contexte : le
@@ -50,6 +53,7 @@ func OpenDB(path string) (*sql.DB, error) {
 func Migrate(ctx context.Context, db *sql.DB) error {
 	for _, table := range []string{
 		TableProjects, TableConfigs, TableAPIKeys, TableProviders, TableCatalogModel,
+		TableRAGDocuments, TableRAGChunks, TableRAGSettings,
 	} {
 		if err := ensureTable(db, table); err != nil {
 			return err
@@ -69,6 +73,9 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 		{"idx_chat_configs_project_active", TableConfigs, []string{"$.project_id", "$.active"}},
 		{"idx_catalog_models_provider", TableCatalogModel, []string{"$.provider"}},
 		{"idx_providers_name", TableProviders, []string{"$.name"}},
+		{"idx_rag_documents_project", TableRAGDocuments, []string{"$.project_id"}},
+		{"idx_rag_chunks_project", TableRAGChunks, []string{"$.project_id"}},
+		{"idx_rag_chunks_document", TableRAGChunks, []string{"$.document_id"}},
 	}
 	for _, idx := range indexes {
 		if err := createJSONIndex(db, idx.name, idx.table, idx.paths...); err != nil {

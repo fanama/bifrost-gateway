@@ -19,3 +19,15 @@ func RegisterRoutes(mux *http.ServeMux, chat *ChatHandler, models *ModelsHandler
 	// instead of net/http's plain-text 404.
 	mux.HandleFunc("/v1/", models.HandleNotFound)
 }
+
+// RegisterRAGRoutes registers the retrieval-augmented generation surface. It
+// is separate from RegisterRoutes so existing callers keep their contract.
+func RegisterRAGRoutes(mux *http.ServeMux, rag *RAGHandler) {
+	if rag == nil {
+		return
+	}
+	mux.HandleFunc("/v1/rag/documents", rag.HandleDocuments)
+	mux.HandleFunc("/v1/rag/documents/", rag.HandleDocumentByID)
+	mux.HandleFunc("/v1/rag/query", rag.HandleQuery)
+	mux.HandleFunc("/v1/rag/search", rag.HandleSearch)
+}

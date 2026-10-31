@@ -16,7 +16,7 @@ import (
 // depuis la page Modeles), sans doublon par identifiant. Une erreur de lecture
 // est remontee : taire le catalogue priverait silencieusement l'utilisateur
 // de ses propres modeles.
-func (s *embeddingsController) embeddingChoices(ctx context.Context) ([]domain.EmbeddingChoice, error) {
+func (s *uiShared) embeddingChoices(ctx context.Context) ([]domain.EmbeddingChoice, error) {
 	choices := make([]domain.EmbeddingChoice, 0, len(domain.EmbeddingChoices)+4)
 	seen := make(map[string]bool, len(domain.EmbeddingChoices)+4)
 	for _, c := range domain.EmbeddingChoices {
@@ -45,7 +45,7 @@ func (s *embeddingsController) embeddingChoices(ctx context.Context) ([]domain.E
 // findEmbeddingChoice cherche un modele dans la liste complete du testeur,
 // insensible a la casse : un modele issu du catalogue se selectionne et se
 // resout exactement comme un choix curate.
-func (s *embeddingsController) findEmbeddingChoice(ctx context.Context, modelID string) (*domain.EmbeddingChoice, error) {
+func (s *uiShared) findEmbeddingChoice(ctx context.Context, modelID string) (*domain.EmbeddingChoice, error) {
 	if choice := domain.FindEmbeddingChoice(modelID); choice != nil {
 		return choice, nil
 	}

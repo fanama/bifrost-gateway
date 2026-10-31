@@ -68,31 +68,13 @@ func (s *ChatConfigStore) GetActiveByProject(ctx context.Context, projectID stri
 	return item, nil
 }
 
-// SetActive bascule la config id comme seule active du projet.
-//
-// L'echec doit etre total : si id n'appartient pas au projet, aucune ecriture
-// n'est effectuee. Pour cela la verification "trouve" est faite dans la
-// fonction de mutation, qui fait echouer ReplaceAll avant la transaction. Sans
-// cela, toutes les configs du projet seraient desactivees puis reappliquees,
-// laissant le projet sans aucune config active.
+// SetActive bascule la config id comme seule active du projet. L'invariant
+// appartient au domaine (domain.MarkActiveConfig) ; l'adaptateur ne fait que
+// le persister dans une transaction. Si id n'appartient pas au projet, la
+// mutation echoue et ReplaceAll n'ecrit rien.
 func (s *ChatConfigStore) SetActive(ctx context.Context, projectID string, id string) error {
 	return s.Store().ReplaceAll(ctx, func(items *[]domain.ChatConfig) error {
-		found := false
-		for i := range *items {
-			if (*items)[i].ProjectID != projectID {
-				continue
-			}
-			if (*items)[i].ID == id {
-				(*items)[i].Active = true
-				found = true
-			} else {
-				(*items)[i].Active = false
-			}
-		}
-		if !found {
-			return domain.ErrConfigNotFound
-		}
-		return nil
+		return domain.MarkActiveConfig(*items, projectID, id)
 	})
 }
 

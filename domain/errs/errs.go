@@ -124,6 +124,8 @@ var (
 	ErrCatalogModelNotFound error = New(CodeNotFound, "catalog model not found")
 	ErrNoActiveConfig       error = New(CodeInvalidRequest, "no active configuration for this project")
 	ErrInvalidAPIKey        error = New(CodeUnauthorized, "invalid or missing API key")
+	ErrDocumentNotFound     error = New(CodeNotFound, "document not found")
+	ErrRAGSettingsNotFound  error = New(CodeNotFound, "rag settings not found")
 )
 
 // DomainError is a generic domain-level validation or business rule error.

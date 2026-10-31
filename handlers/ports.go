@@ -11,4 +11,5 @@ type (
 	ConfigQuerier      = httpx.ConfigQuerier
 	ModelLister        = httpx.ModelLister
 	Embedder           = httpx.Embedder
+	RAGService         = httpx.RAGService
 )

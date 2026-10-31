@@ -161,6 +161,8 @@ tr.active{background:rgba(34,197,94,.06)}
   <div class="brand">Bridge<span>Gateway</span></div>
   <a href="/" {{if eq .Active "chat"}}class="active"{{end}}>Discussion</a>
   <a href="/embeddings-test" {{if eq .Active "embeddings"}}class="active"{{end}}>Embeddings</a>
+  <a href="/rag/settings" {{if eq .Active "rag-settings"}}class="active"{{end}}>RAG Paramètres</a>
+  <a href="/rag/test" {{if eq .Active "rag-test"}}class="active"{{end}}>RAG Test</a>
   <a href="/providers" {{if eq .Active "providers"}}class="active"{{end}}>Providers</a>
   <a href="/models" {{if eq .Active "models"}}class="active"{{end}}>Modeles</a>
   <a href="/projects" {{if eq .Active "configs"}}class="active"{{end}}>Projets</a>

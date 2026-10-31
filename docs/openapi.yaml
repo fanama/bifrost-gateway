@@ -24,6 +24,8 @@ tags:
     description: Vecteurs d'embedding
   - name: models
     description: Decouverte des modeles
+  - name: rag
+    description: Ingestion, recherche et reponses ancrees par projet
   - name: health
     description: Sondes de sante (sans authentification)
 security:
@@ -97,6 +99,130 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '500':
           $ref: '#/components/responses/InternalServerError'
+  /v1/rag/documents:
+    get:
+      tags: [rag]
+      summary: Liste les documents indexes du projet
+      operationId: listRAGDocuments
+      responses:
+        '200':
+          description: Documents du projet, du plus recent au plus ancien
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RAGDocumentList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [rag]
+      summary: Indexe un document (ingestion synchrone)
+      description: |
+        Accepte un fichier texte, Markdown, CSV, JSON, log, YAML, XML ou HTML.
+        Les formats binaires (PDF, Office, images) sont refuses. Le document et
+        ses passages sont ecrits avant la reponse 201.
+      operationId: uploadRAGDocument
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                model:
+                  type: string
+                  description: Modele d'embedding ; vide = local-embedding.
+            encoding:
+              file:
+                contentType: text/plain, text/markdown, text/csv, application/json, application/xml, text/html
+      responses:
+        '201':
+          description: Document indexe
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RAGDocument'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          description: Fichier au-dela de 25 Mio
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /v1/rag/documents/{id}:
+    delete:
+      tags: [rag]
+      summary: Supprime un document et ses passages
+      operationId: deleteRAGDocument
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Document supprime
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/rag/query:
+    post:
+      tags: [rag]
+      summary: Repond a une question a partir des passages du projet
+      description: |
+        Le modele de chat actif du projet recoit les passages numerotes et des
+        regles d'ancrage strictes. Sans passage, le prompt indique explicitement
+        qu'aucun passage ne correspond et `has_context` vaut false.
+      operationId: queryRAG
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RAGQueryRequest'
+      responses:
+        '200':
+          description: Reponse ancree et sources
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RAGAnswer'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /v1/rag/search:
+    post:
+      tags: [rag]
+      summary: Retourne les passages pertinents sans appeler le modele
+      operationId: searchRAG
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RAGQueryRequest'
+      responses:
+        '200':
+          description: Passages classes par similarite
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RAGSearchResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
   /v1/models:
     get:
       tags: [models]
@@ -407,6 +533,112 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Model'
+    RAGDocument:
+      type: object
+      required: [id, project_id, file_name, size_bytes, chunk_count, embedding_model, created_at]
+      properties:
+        id:
+          type: string
+        project_id:
+          type: string
+        file_name:
+          type: string
+          example: notes.txt
+        content_type:
+          type: string
+          example: text/plain
+        size_bytes:
+          type: integer
+        chunk_count:
+          type: integer
+        embedding_model:
+          type: string
+          example: local-embedding
+        created_at:
+          type: string
+          format: date-time
+    RAGDocumentList:
+      type: object
+      required: [documents, total]
+      properties:
+        documents:
+          type: array
+          items:
+            $ref: '#/components/schemas/RAGDocument'
+        total:
+          type: integer
+    RAGQueryRequest:
+      type: object
+      required: [question]
+      properties:
+        question:
+          type: string
+          maxLength: 8000
+        model:
+          type: string
+          description: Modele d'embedding ; vide = parametres du projet, puis modele du corpus ou local-embedding.
+        top_k:
+          type: integer
+          minimum: 1
+          maximum: 20
+          default: 4
+          description: Vide = top_k enregistre dans les parametres RAG du projet.
+        system_prompt:
+          type: string
+          description: Consigne additionnelle ; vide = consigne enregistree dans les parametres RAG du projet.
+    RAGSource:
+      type: object
+      required: [document_id, file_name, chunk_index, score]
+      properties:
+        document_id:
+          type: string
+        file_name:
+          type: string
+        chunk_index:
+          type: integer
+        score:
+          type: number
+          format: double
+    RAGAnswer:
+      type: object
+      required: [answer, sources, has_context]
+      properties:
+        answer:
+          type: string
+        sources:
+          type: array
+          items:
+            $ref: '#/components/schemas/RAGSource'
+        has_context:
+          type: boolean
+        model:
+          type: string
+          description: Modele qui a reellement produit la reponse.
+    RAGSearchHit:
+      type: object
+      required: [document_id, file_name, chunk_index, text, score]
+      properties:
+        document_id:
+          type: string
+        file_name:
+          type: string
+        chunk_index:
+          type: integer
+        text:
+          type: string
+        score:
+          type: number
+          format: double
+    RAGSearchResponse:
+      type: object
+      required: [chunks, total]
+      properties:
+        chunks:
+          type: array
+          items:
+            $ref: '#/components/schemas/RAGSearchHit'
+        total:
+          type: integer
     Error:
       type: object
       required: [error]

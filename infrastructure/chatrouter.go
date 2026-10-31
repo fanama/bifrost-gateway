@@ -39,47 +39,47 @@ var _ domain.LLMProvider = (*OnnxChatRouter)(nil)
 var _ domain.StreamingLLMProvider = (*OnnxChatRouter)(nil)
 
 func (r *OnnxChatRouter) Chat(ctx context.Context, cfg *domain.ChatConfig, messages []domain.ChatMessage) (domain.LLMResult, error) {
-	if r.local(cfg) {
+	if r.local(ctx, cfg) {
 		return r.onnx.Chat(ctx, cfg, messages)
 	}
 	return r.inner.Chat(ctx, cfg, messages)
 }
 
 func (r *OnnxChatRouter) ChatStream(ctx context.Context, cfg *domain.ChatConfig, messages []domain.ChatMessage) (<-chan domain.StreamEvent, error) {
-	if r.local(cfg) {
+	if r.local(ctx, cfg) {
 		return r.onnx.ChatStream(ctx, cfg, messages)
 	}
 	return domain.StreamFrom(ctx, r.inner, cfg, messages)
 }
 
 // local tranche : provider onnx, ou modele du catalogue declare onnx/chat.
-func (r *OnnxChatRouter) local(cfg *domain.ChatConfig) bool {
-	if cfg == nil {
-		return false
-	}
-	if strings.EqualFold(strings.TrimSpace(cfg.Provider), domain.ProviderOnnx) {
-		return true
-	}
-	return r.onnxCatalogModel(strings.TrimSpace(cfg.Model))
+// La regle elle-meme appartient au domaine ; l'adaptateur ne fait que fournir
+// la fiche catalogue du modele demande.
+func (r *OnnxChatRouter) local(ctx context.Context, cfg *domain.ChatConfig) bool {
+	return domain.IsOnnxChatServed(cfg, r.catalogModel(ctx, cfg.Model))
 }
 
-// onnxCatalogModel verifie que le modele designe est, au catalogue, un modele
-// de chat execute par le moteur onnx. Lecture best-effort : une panne du
-// catalogue rend la main a la regle de provider, jamais un echec.
-func (r *OnnxChatRouter) onnxCatalogModel(model string) bool {
-	if r.catalog == nil || model == "" || r.onnx == nil {
-		return false
+// catalogModel resout la fiche catalogue du modele demande. Lecture
+// best-effort : une panne du catalogue rend la main a la regle de provider,
+// jamais un echec.
+func (r *OnnxChatRouter) catalogModel(ctx context.Context, model string) *domain.ModelInfo {
+	name := strings.TrimSpace(model)
+	if r.catalog == nil || name == "" {
+		return nil
 	}
-	models, err := r.catalog.List(context.Background())
+	models, err := r.catalog.List(ctx)
 	if err != nil {
-		return false
+		return nil
 	}
-	for _, m := range models {
-		if !strings.EqualFold(m.Name, model) {
+	for i := range models {
+		if !strings.EqualFold(models[i].Name, name) {
 			continue
 		}
-		return strings.EqualFold(m.Provider, domain.ProviderOnnx) &&
-			strings.EqualFold(domain.NormalizeModelKind(m.Kind), domain.ModelKindChat)
+		return &domain.ModelInfo{
+			Name:     models[i].Name,
+			Provider: models[i].Provider,
+			Kind:     models[i].Kind,
+		}
 	}
-	return false
+	return nil
 }

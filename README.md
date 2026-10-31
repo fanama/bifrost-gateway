@@ -19,8 +19,8 @@ before each call.
 - **Multi-provider abstraction** — one OpenAI-compatible surface for cloud and
   local providers, including private OpenAI-compatible gateways.
 - **HTMX web UI** — chat, models, providers, projects, per-project
-  configurations and API keys, plus monitoring; server-rendered fragments with
-  no external JavaScript bundle.
+  configurations and API keys, monitoring, plus RAG settings and a RAG test
+  bench; server-rendered fragments with no external JavaScript bundle.
 - **Business enrichment** — system-prompt injection, default model selection,
   strict response formats and generation parameters.
 - **Multi-tenant projects** — every configuration belongs to a project; API
@@ -29,6 +29,9 @@ before each call.
 - **Local ONNX engines** — embeddings and chat run in-process through a pure-Go
   ONNX Runtime binding. Artifacts live under `models/onnx/` (gitignored) and are
   downloaded on first start unless `ONNX_AUTO_DOWNLOAD=0`.
+- **Retrieval-augmented generation** — project-scoped document ingestion,
+  cosine-similarity retrieval in SQLite, and cited answers grounded in the
+  retrieved passages under `/v1/rag/*`.
 - **Tier routing and failover** — a local classifier picks `fast`, `balanced`
   or `frontier`; provider saturation moves the request up the ladder and cools
   the failing tier down.
@@ -105,23 +108,26 @@ app.go + wiring.go = composition root (the only place that assembles everything)
 │   ├── monitoring/         # metrics snapshot types
 │   ├── project/            # Project and APIKey entities
 │   ├── provider/           # Provider and catalog model entities
+│   ├── rag/                # RAG entities, ports, chunking, ranking, prompt
 │   ├── routing/            # tier rules, failure classification, cooldown keys
 │   └── shared/             # cache, ID and repository contracts
 ├── application/
 │   ├── auth/  catalog/  chat/  config/  embedding/
 │   ├── entity/             # generic CRUD use case
 │   ├── project/            # projects and API keys
-│   └── provider/
+│   ├── provider/
+│   └── rag/                # ingestion, retrieval and grounded answers
 ├── infrastructure/
 │   ├── config/  metrics/   # configuration loading, metrics collection
 │   ├── *_store.go          # SQLite repositories
+│   ├── rag_*.go            # RAG stores and text extractor
 │   ├── cached*.go          # repository and LLM caches
 │   ├── bifrost*.go         # Bifrost adapters and conversions
 │   ├── routing*.go         # tier ladder and failover
 │   ├── onnx*.go            # ONNX embeddings, chat and tokenizers
 │   └── jsonimport.go       # legacy JSON → SQLite migration
 ├── handlers/               # OpenAI-compatible HTTP delivery
-│   ├── chat/  embeddings/  models/  httpx/
+│   ├── chat/  embeddings/  models/  rag/  httpx/
 ├── web/                    # HTMX controllers per feature
 │   ├── templates/  static/
 ├── docs/                   # embedded OpenAPI document
@@ -183,6 +189,11 @@ port is configured.
 | `/monitoring` | GET | Monitoring dashboard |
 | `/monitoring/stats` | GET | Auto-refreshing HTMX fragment |
 | `/monitoring/metrics.json` | GET | JSON metrics snapshot |
+| `/rag/settings` | GET/POST | Per-project RAG parameters |
+| `/rag/test` | GET | RAG upload, corpus and query test bench |
+| `/rag/test/upload` | POST | Index a document from the test page |
+| `/rag/test/query` | POST | Answer or search-only HTMX fragment |
+| `/rag/test/documents/{id}/delete` | POST | Delete a document from the test page |
 | `/health/liveness` | GET | Liveness probe |
 | `/health/readiness` | GET | Readiness probe |
 | `/health/test_connection` | GET | Provider connectivity check |
@@ -373,6 +384,34 @@ curl -X POST http://localhost:4000/v1/embeddings \
   -H 'Content-Type: application/json' \
   -d '{"model":"onnx/all-MiniLM-L6-v2","input":"The cat sleeps on the sofa."}'
 ```
+
+### Retrieval-augmented generation
+
+Upload a document to the project's corpus (synchronous):
+
+```bash
+curl -X POST http://localhost:4000/v1/rag/documents \
+  -H 'Authorization: Bearer sk-bridge-XXXX' \
+  -F 'file=@notes.txt'
+```
+
+Ask a question; the answer is grounded in the retrieved passages and cites them:
+
+```bash
+curl -X POST http://localhost:4000/v1/rag/query \
+  -H 'Authorization: Bearer sk-bridge-XXXX' \
+  -H 'Content-Type: application/json' \
+  -d '{"question":"What is the alpha project called?","top_k":4}'
+```
+
+`GET /v1/rag/documents` lists the corpus, `DELETE /v1/rag/documents/{id}`
+removes a document, and `POST /v1/rag/search` returns passages without calling
+the model. The same workflow is available in the web UI under **RAG Test**;
+embedding model, `top_k`, chunking and extra instructions are configured per
+project under **RAG Paramètres**. The master key must name the project with
+`X-Project-ID` or `?project_id=`. Supported uploads are text, Markdown, CSV, JSON, log, YAML, XML
+and HTML; PDF and Office files are rejected explicitly. See
+`app-specification.md` for limits and the full design.
 
 ### Models and errors
 

@@ -9,6 +9,7 @@ import (
 	"bridge-gateway/application/entity"
 	"bridge-gateway/application/project"
 	"bridge-gateway/application/provider"
+	"bridge-gateway/application/rag"
 	"bridge-gateway/domain"
 )
 
@@ -24,6 +25,9 @@ type (
 	ModelUseCase        = catalog.ModelUseCase
 	ModelCatalogUseCase = catalog.ModelCatalogUseCase
 	EmbeddingUseCase    = embedding.EmbeddingUseCase
+	RAGUseCase          = rag.Service
+	RAGIngestOptions    = rag.IngestOptions
+	RAGQueryOptions     = rag.QueryOptions
 )
 
 type EntityUseCase[T any, R domain.CrudRepository[T]] = entity.EntityUseCase[T, R]
@@ -66,4 +70,16 @@ func NewEmbeddingUseCase(configs domain.ChatConfigRepository, provider domain.Em
 
 func NewEntityUseCase[T any, R domain.CrudRepository[T]](repo R) EntityUseCase[T, R] {
 	return entity.NewEntityUseCase[T, R](repo)
+}
+
+func NewRAGUseCase(
+	docs domain.DocumentRepository,
+	chunks domain.ChunkRepository,
+	extractor domain.TextExtractor,
+	embedder domain.EmbeddingProvider,
+	configs domain.ChatConfigRepository,
+	settings domain.RAGSettingsRepository,
+	llm domain.LLMProvider,
+) *RAGUseCase {
+	return rag.NewService(docs, chunks, extractor, embedder, configs, settings, llm)
 }

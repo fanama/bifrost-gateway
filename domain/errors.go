@@ -21,4 +21,5 @@ var (
 	ErrCatalogModelNotFound = errs.ErrCatalogModelNotFound
 	ErrNoActiveConfig       = errs.ErrNoActiveConfig
 	ErrInvalidAPIKey        = errs.ErrInvalidAPIKey
+	ErrDocumentNotFound     = errs.ErrDocumentNotFound
 )

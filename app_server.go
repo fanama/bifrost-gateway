@@ -19,6 +19,7 @@ func (a *gatewayApp) routes() (http.Handler, error) {
 	mux := http.NewServeMux()
 	docs.Register(mux)
 	handlers.RegisterRoutes(mux, a.chat, a.models, a.embed)
+	handlers.RegisterRAGRoutes(mux, a.rag)
 	mux.HandleFunc("/chat/completions", a.chat.HandleChatCompletion)
 	mux.HandleFunc("/embeddings", a.embed.HandleEmbedding)
 	mux.HandleFunc("/health/liveness", a.chat.HandleHealth)
@@ -28,7 +29,7 @@ func (a *gatewayApp) routes() (http.Handler, error) {
 	ui, err := web.NewServer(
 		a.useCases.chat, a.useCases.config, a.useCases.model, a.useCases.project,
 		a.useCases.key, a.useCases.provider, a.useCases.catalog, a.useCases.embedding,
-		a.metrics, ollamaBaseURL(),
+		a.metrics, ollamaBaseURL(), a.useCases.rag,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to init UI: %w", err)

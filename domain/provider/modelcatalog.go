@@ -16,6 +16,11 @@ const (
 	ModelKindEmbedding = "embedding"
 )
 
+// ProviderOnnx nomme le moteur d'inference local execute in-process. Il ne
+// s'agit pas d'un provider distant : ni URL ni cle, seulement des artefacts
+// ONNX sur disque.
+const ProviderOnnx = "onnx"
+
 // NormalizeModelKind ramene un kind saisi vers sa forme canonique. Une valeur
 // vide vaut "chat" : les entrees enregistrees avant l'apparition du champ
 // restent des modeles de chat, et un appelant qui ne sait pas peut taire le

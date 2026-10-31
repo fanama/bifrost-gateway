@@ -40,6 +40,7 @@ type Server struct {
 	models     modelsController
 	projects   projectsController
 	monitoring monitoringController
+	rag        ragController
 }
 
 func NewServer(
@@ -53,12 +54,17 @@ func NewServer(
 	embeddings embeddingService,
 	metrics metricsService,
 	ollamaBase string,
+	ragServices ...ragService,
 ) (*Server, error) {
 	tmpl, err := template.New("").Funcs(templateFuncs()).ParseFS(files, "templates/*.html")
 	if err != nil {
 		return nil, fmt.Errorf("parse templates: %w", err)
 	}
 	shared := uiShared{templates: tmpl, providers: providers, models: models, ollamaBase: ollamaBase}
+	rag := ragController{uiShared: shared, projects: projects}
+	if len(ragServices) > 0 && ragServices[0] != nil {
+		rag.rag = ragServices[0]
+	}
 	return &Server{
 		chat:       chatController{uiShared: shared, chat: chat, configs: configs},
 		embeddings: embeddingsController{uiShared: shared, embeddings: embeddings},
@@ -66,6 +72,7 @@ func NewServer(
 		models:     modelsController{uiShared: shared, catalog: catalog},
 		projects:   projectsController{uiShared: shared, projects: projects, configs: configs, keys: keys},
 		monitoring: monitoringController{uiShared: shared, metrics: metrics},
+		rag:        rag,
 	}, nil
 }
 
@@ -127,7 +134,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /projects/{pid}/configs/{cid}", s.projects.deleteProjectConfig)
 	mux.HandleFunc("POST /projects/{pid}/keys", s.projects.createProjectKey)
 	mux.HandleFunc("DELETE /projects/{pid}/keys/{kid}", s.projects.deleteProjectKey)
-
+	s.rag.register(mux)
 	mux.HandleFunc("GET /configs", s.redirectToProjects)
 
 	mux.Handle("GET /static/", http.FileServer(http.FS(files)))

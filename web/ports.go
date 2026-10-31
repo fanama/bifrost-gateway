@@ -71,6 +71,17 @@ type embeddingService interface {
 	EmbedWithConfig(ctx context.Context, cfg *domain.ChatConfig, req *domain.EmbeddingRequest) (*domain.EmbeddingResponse, error)
 }
 
+// ragService expose l'ingestion, la recherche et les parametres RAG.
+type ragService interface {
+	Settings(ctx context.Context, projectID string) (*domain.RAGSettings, error)
+	SaveSettings(ctx context.Context, settings *domain.RAGSettings) (*domain.RAGSettings, error)
+	Ingest(ctx context.Context, projectID, fileName, contentType string, content []byte, opts application.RAGIngestOptions) (*domain.Document, error)
+	Documents(ctx context.Context, projectID string) ([]domain.Document, error)
+	DeleteDocument(ctx context.Context, projectID, documentID string) error
+	Query(ctx context.Context, projectID, question string, opts application.RAGQueryOptions) (*domain.Answer, error)
+	Search(ctx context.Context, projectID, question string, opts application.RAGQueryOptions) ([]domain.RetrievedChunk, error)
+}
+
 // metricsService rend un instantane des compteurs de supervision. Le serveur UI
 // ne depend pas du collecteur concret : un stub suffit aux tests, et un autre
 // backend (Prometheus, OTel) remplacerait l'adaptateur sans changer la page.

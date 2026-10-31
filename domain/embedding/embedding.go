@@ -18,7 +18,7 @@ const (
 	ModelLocalEmbedding = "local-embedding"
 	// ProviderOnnx designe le moteur ONNX local (pas un provider distant :
 	// il n'a ni URL ni cle, l'inference se fait in-process).
-	ProviderOnnx = "onnx"
+	ProviderOnnx = provider.ProviderOnnx
 	// OnnxModelPrefix est le préfixe des identifiants de modeles ONNX locaux :
 	// "onnx/<repertoire>" pointe vers models/onnx/<repertoire>/. Il sert aux
 	// identifiants, jamais aux chemins : c'est l'embedder qui le retire.

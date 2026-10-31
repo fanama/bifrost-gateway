@@ -39,6 +39,7 @@ type gatewayUseCases struct {
 	provider  *application.ProviderUseCase
 	catalog   *application.ModelCatalogUseCase
 	embedding *application.EmbeddingUseCase
+	rag       *application.RAGUseCase
 }
 
 // gatewayApp owns every long-lived dependency of the running server.
@@ -53,9 +54,12 @@ type gatewayApp struct {
 	stores   gatewayStores
 	useCases gatewayUseCases
 	bifrost  *infrastructure.BifrostLLMProvider
+	llm      domain.LLMProvider
+	embedder domain.EmbeddingProvider
 	chat     *handlers.ChatHandler
 	models   *handlers.ModelsHandler
 	embed    *handlers.EmbeddingHandler
+	rag      *handlers.RAGHandler
 }
 
 // newGatewayApp opens storage, builds the domain services, and returns a fully
@@ -93,6 +97,7 @@ func newGatewayApp(ctx context.Context, opts appOptions) (*gatewayApp, error) {
 	}
 	app.seedProviders(ctx)
 	app.buildEmbeddingService()
+	app.buildRAGService()
 	return app, nil
 }
 
@@ -179,6 +184,7 @@ func (a *gatewayApp) buildChatServices() error {
 		a.cfg, onnxChat, a.bifrost, a.stores.catalog,
 		a.stores.configs, a.stores.providers, a.llmCache, a.metrics,
 	)
+	a.llm = llm
 
 	enrichment := domain.NewEnrichmentService()
 	u := &a.useCases
@@ -212,9 +218,25 @@ func (a *gatewayApp) buildEmbeddingService() {
 	local := infrastructure.NewLocalEmbedder(infrastructure.LocalEmbedderOptions{})
 	onnx := infrastructure.NewOnnxEmbedder(infrastructure.DefaultOnnxEmbedderOptions())
 	router := infrastructure.NewEmbeddingRouter(local, onnx, a.bifrost).WithCatalog(a.stores.catalog)
+	a.embedder = router
 	a.useCases.embedding = application.NewEmbeddingUseCase(a.stores.configs, router)
 	a.embed = handlers.NewEmbeddingHandler(
 		a.useCases.auth, a.useCases.embedding,
 		application.NewConfigUseCase(a.stores.configs),
 	)
+}
+
+// buildRAGService wires document storage, text extraction, the shared
+// embedding router and the shared chat provider into the RAG use case.
+func (a *gatewayApp) buildRAGService() {
+	a.useCases.rag = application.NewRAGUseCase(
+		infrastructure.NewRAGDocumentStore(a.db),
+		infrastructure.NewRAGChunkStore(a.db),
+		infrastructure.NewRAGTextExtractor(0),
+		a.embedder,
+		a.stores.configs,
+		infrastructure.NewRAGSettingsStore(a.db),
+		a.llm,
+	)
+	a.rag = handlers.NewRAGHandler(a.useCases.auth, a.useCases.rag)
 }

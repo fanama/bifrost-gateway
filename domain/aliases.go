@@ -10,6 +10,7 @@ import (
 	"bridge-gateway/domain/monitoring"
 	"bridge-gateway/domain/project"
 	"bridge-gateway/domain/provider"
+	domainrag "bridge-gateway/domain/rag"
 	"bridge-gateway/domain/shared"
 )
 
@@ -97,6 +98,26 @@ const (
 
 var EmbeddingChoices = embedding.EmbeddingChoices
 
+// Retrieval-augmented generation.
+type (
+	Document              = domainrag.Document
+	Chunk                 = domainrag.Chunk
+	RetrievedChunk        = domainrag.RetrievedChunk
+	Source                = domainrag.Source
+	Answer                = domainrag.Answer
+	DocumentRepository    = domainrag.DocumentRepository
+	ChunkRepository       = domainrag.ChunkRepository
+	TextExtractor         = domainrag.TextExtractor
+	RAGSettings           = domainrag.Settings
+	RAGSettingsRepository = domainrag.SettingsRepository
+)
+
+const (
+	DefaultRAGTopK  = domainrag.DefaultTopK
+	MaxRAGTopK      = domainrag.MaxTopK
+	DefaultRAGChunk = domainrag.DefaultChunkSize
+)
+
 // Monitoring snapshots.
 type (
 	MetricsSnapshot = monitoring.MetricsSnapshot
@@ -152,6 +173,12 @@ func HashAPIKey(secret string) string                   { return project.HashAPI
 func NewAPIKey() (string, string, string)               { return project.NewAPIKey() }
 func NormalizeModelKind(kind string) string             { return provider.NormalizeModelKind(kind) }
 func FindEmbeddingChoice(model string) *EmbeddingChoice { return embedding.FindEmbeddingChoice(model) }
+func IsOnnxChatServed(cfg *ChatConfig, m *ModelInfo) bool {
+	return chat.ServedByOnnx(cfg, m)
+}
+func MarkActiveConfig(configs []ChatConfig, projectID, id string) error {
+	return config.MarkActive(configs, projectID, id)
+}
 func EmbeddingChoiceFromModel(m ModelInfo) (EmbeddingChoice, bool) {
 	return embedding.EmbeddingChoiceFromModel(m)
 }

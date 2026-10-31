@@ -54,14 +54,12 @@ func (p *RoutingLLMProvider) predict(ctx context.Context, messages []domain.Chat
 	return rank, nil
 }
 
-// applyTier merges target's provider/model/credentials with active's generation
-// parameters so tier escalation preserves conversation behavior.
+// applyTier resout les identifiants de la cible puis delegue au domaine la
+// fusion des reglages de conversation. L'adaptateur ne garde que la resolution
+// des credentials, qui depend du repository de providers.
 func (p *RoutingLLMProvider) applyTier(ctx context.Context, active *domain.ChatConfig, target *domain.ChatConfig) *domain.ChatConfig {
 	if target == nil {
 		return nil
-	}
-	if active != nil && active.Provider == target.Provider && active.Model == target.Model {
-		return active
 	}
 
 	out := *target
@@ -71,16 +69,5 @@ func (p *RoutingLLMProvider) applyTier(ctx context.Context, active *domain.ChatC
 			out.BaseURL = prov.BaseURL
 		}
 	}
-
-	if active != nil {
-		out.SystemPrompt = active.SystemPrompt
-		out.Temperature = active.Temperature
-		out.TopP = active.TopP
-		out.MaxTokens = active.MaxTokens
-		out.FrequencyPenalty = active.FrequencyPenalty
-		out.PresencePenalty = active.PresencePenalty
-		out.ResponseFormat = active.ResponseFormat
-		out.ResponseSchema = active.ResponseSchema
-	}
-	return &out
+	return routing.MergeTierConfig(active, &out)
 }

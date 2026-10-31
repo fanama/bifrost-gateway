@@ -1,0 +1,237 @@
+{{define "page_rag_settings"}}
+{{template "head" .}}
+<body hx-boost="true">
+{{template "nav" .}}
+<main id="main" class="page">
+  <div class="page-head">
+    <div>
+      <h1>RAG — Paramètres</h1>
+      <p class="muted">Ces valeurs s'appliquent à l'ingestion et aux questions du projet sélectionné. L'API peut les surcharger ponctuellement.</p>
+    </div>
+  </div>
+
+  <div id="rag-settings-error"></div>
+
+  {{if .Projects}}
+  <div class="card">
+    <label>Projet
+      <select onchange="if(this.value){window.location='/rag/settings?project_id='+encodeURIComponent(this.value)}">
+        {{range .Projects}}
+        <option value="{{.ID}}" {{if eq .ID $.SelectedProjectID}}selected{{end}}>{{.Name}}</option>
+        {{end}}
+      </select>
+    </label>
+  </div>
+
+  <section id="rag-settings-body">
+    {{template "rag_settings_form" .}}
+  </section>
+  {{else}}
+  <div class="card center muted" style="padding:40px 20px">
+    Aucun projet. <a href="/projects">Créez un projet</a> avant de configurer le RAG.
+  </div>
+  {{end}}
+</main>
+{{template "tail" .}}
+</body>
+</html>
+{{end}}
+
+{{define "rag_settings_form"}}
+{{if .Saved}}<div class="toast" style="background:rgba(34,197,94,.12);border:1px solid var(--ok);color:var(--ok)">Paramètres enregistrés.</div>{{end}}
+<div class="card">
+  <form hx-post="/rag/settings" hx-target="#rag-settings-body" hx-swap="innerHTML">
+    <input type="hidden" name="project_id" value="{{.Settings.ProjectID}}">
+    <div class="grid2">
+      <label>Modèle d'embedding
+        <select name="embedding_model" required>
+          {{$current := .Settings.EmbeddingModel}}
+          {{range .EmbedChoices}}
+          <option value="{{.Model}}" {{if eq .Model $current}}selected{{end}}>{{.Label}}</option>
+          {{end}}
+        </select>
+      </label>
+      <label>Passages envoyés au modèle (top_k)
+        <input type="number" name="top_k" min="1" max="20" value="{{.Settings.TopK}}" required>
+      </label>
+      <label>Taille des passages (caractères)
+        <input type="number" name="chunk_size" min="1" value="{{.Settings.ChunkSize}}" required>
+      </label>
+      <label>Chevauchement (caractères)
+        <input type="number" name="chunk_overlap" min="0" value="{{.Settings.ChunkOverlap}}" required>
+      </label>
+    </div>
+    <label>Consigne supplémentaire (optionnel)
+      <textarea name="system_prompt" rows="4" placeholder="Ex : réponds en français et cite toujours les sources.">{{.Settings.SystemPrompt}}</textarea>
+    </label>
+    <p class="muted" style="font-size:.8rem">Le découpage s'applique aux prochains imports. Changer de modèle d'embedding rend les passages existants incompatibles : réindexez les documents depuis la page de test.</p>
+    <button class="btn" type="submit">Enregistrer</button>
+  </form>
+</div>
+{{end}}
+
+{{define "page_rag_test"}}
+{{template "head" .}}
+<body hx-boost="true">
+{{template "nav" .}}
+<main id="main" class="page">
+  <div class="page-head">
+    <div>
+      <h1>RAG — Test</h1>
+      <p class="muted">Indexez un document puis posez une question : la réponse est construite uniquement à partir des passages retrouvés.</p>
+    </div>
+  </div>
+
+  <div id="rag-test-error"></div>
+
+  {{if .Projects}}
+  <div class="card">
+    <label>Projet
+      <select onchange="if(this.value){window.location='/rag/test?project_id='+encodeURIComponent(this.value)}">
+        {{range .Projects}}
+        <option value="{{.ID}}" {{if eq .ID $.SelectedProjectID}}selected{{end}}>{{.Name}}</option>
+        {{end}}
+      </select>
+    </label>
+    {{with .Settings}}
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px">
+      <span class="badge ok">{{.EmbeddingModel}}</span>
+      <span class="badge">top_k {{.TopK}}</span>
+      <span class="badge">chunks {{.ChunkSize}} / {{.ChunkOverlap}}</span>
+      <a class="badge" href="/rag/settings?project_id={{.ProjectID}}">modifier les paramètres</a>
+    </div>
+    {{end}}
+  </div>
+
+  <div class="grid2">
+    <div class="card">
+      <h3 style="margin-top:0;font-size:.95rem">Ajouter un document</h3>
+      <form hx-post="/rag/test/upload" hx-encoding="multipart/form-data" hx-target="#rag-documents" hx-swap="innerHTML" hx-indicator="#rag-upload-loading">
+        <input type="hidden" name="project_id" value="{{.SelectedProjectID}}">
+        <label>Fichier
+          <input type="file" name="file" required accept=".txt,.md,.markdown,.csv,.json,.log,.yaml,.yml,.xml,.html,.htm">
+        </label>
+        <p class="muted" style="font-size:.78rem">Formats texte uniquement (PDF et bureautique non pris en charge), 25 Mo maximum.</p>
+        <button class="btn" type="submit">Indexer</button>
+        <span id="rag-upload-loading" class="htmx-indicator muted" style="font-size:.82rem">Extraction et embedding…</span>
+      </form>
+    </div>
+
+    <div class="card">
+      <h3 style="margin-top:0;font-size:.95rem">Poser une question</h3>
+      <form hx-post="/rag/test/query" hx-target="#rag-answer" hx-swap="innerHTML" hx-indicator="#rag-query-loading">
+        <input type="hidden" name="project_id" value="{{.SelectedProjectID}}">
+        <label>Question
+          <textarea name="question" rows="3" placeholder="Que disent les documents à propos de… ?" required></textarea>
+        </label>
+        <div class="grid2">
+          <label>Mode
+            <select name="mode">
+              <option value="answer">Réponse du modèle</option>
+              <option value="search">Recherche seule</option>
+            </select>
+          </label>
+          <label>top_k (optionnel)
+            <input type="number" name="top_k" min="1" max="20" placeholder="Paramètres du projet">
+          </label>
+        </div>
+        <button class="btn" type="submit">Lancer</button>
+        <span id="rag-query-loading" class="htmx-indicator muted" style="font-size:.82rem">Recherche en cours…</span>
+      </form>
+    </div>
+  </div>
+
+  <section class="card">
+    <h3 style="margin-top:0;font-size:.95rem">Documents indexés</h3>
+    <section id="rag-documents">
+      {{template "rag_documents_body" .}}
+    </section>
+  </section>
+
+  <div id="rag-answer">
+    <div class="card center muted" style="padding:34px 20px">La réponse et les sources apparaîtront ici.</div>
+  </div>
+  {{else}}
+  <div class="card center muted" style="padding:40px 20px">
+    Aucun projet. <a href="/projects">Créez un projet</a> avant d'utiliser le RAG.
+  </div>
+  {{end}}
+</main>
+{{template "tail" .}}
+</body>
+</html>
+{{end}}
+
+{{define "rag_documents_body"}}
+{{if .Message}}<div class="toast" style="background:rgba(34,197,94,.12);border:1px solid var(--ok);color:var(--ok)">{{.Message}}</div>{{end}}
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Fichier</th><th>Passages</th><th>Modèle</th><th>Taille</th><th>Indexé le</th><th></th></tr></thead>
+    <tbody>
+    {{range .Documents}}
+      <tr>
+        <td><strong>{{.FileName}}</strong></td>
+        <td>{{.ChunkCount}}</td>
+        <td><span class="badge">{{.EmbeddingModel}}</span></td>
+        <td class="muted">{{.SizeBytes}} o</td>
+        <td class="muted">{{.CreatedAt.Format "02/01/2006 15:04"}}</td>
+        <td class="actions">
+          <form hx-post="/rag/test/documents/{{.ID}}/delete" hx-target="#rag-documents" hx-swap="innerHTML"
+                hx-confirm="Supprimer ce document et ses passages ?">
+            <input type="hidden" name="project_id" value="{{$.SelectedProjectID}}">
+            <button class="btn danger small" type="submit">Supprimer</button>
+          </form>
+        </td>
+      </tr>
+    {{else}}
+      <tr><td colspan="6" class="muted center">Aucun document indexé pour ce projet.</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+</div>
+{{end}}
+
+{{define "rag_answer"}}
+<div class="card">
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px;flex-wrap:wrap">
+    <h3 style="margin:0;font-size:1rem">Réponse</h3>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <span class="badge {{if .Result.HasContext}}ok{{end}}">{{if .Result.HasContext}}contexte trouvé{{else}}aucun passage{{end}}</span>
+      {{if .Result.Model}}<span class="badge">{{.Result.Model}}</span>{{end}}
+    </div>
+  </div>
+  <p class="muted" style="font-size:.82rem">Question : {{.Question}}</p>
+  <div style="white-space:pre-wrap;line-height:1.6">{{.Result.Answer}}</div>
+  {{if .Sources}}
+  <h4 style="font-size:.85rem;margin:18px 0 8px">Sources</h4>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Document</th><th>Passage</th><th>Score</th></tr></thead>
+      <tbody>
+      {{range .Sources}}
+        <tr><td>{{.FileName}}</td><td>#{{.ChunkIndex}}</td><td>{{printf "%.3f" .Score}}</td></tr>
+      {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{end}}
+</div>
+{{end}}
+
+{{define "rag_search"}}
+<div class="card">
+  <h3 style="margin:0 0 12px;font-size:1rem">Passages retrouvés</h3>
+  <p class="muted" style="font-size:.82rem">Question : {{.Question}}</p>
+  {{range .Chunks}}
+  <div style="background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:10px">
+    <div style="display:flex;justify-content:space-between;gap:10px;margin-bottom:6px">
+      <strong style="font-size:.88rem">{{.Chunk.FileName}} · passage #{{.Chunk.Ordinal}}</strong>
+      <span class="badge">{{printf "%.3f" .Score}}</span>
+    </div>
+    <div style="font-size:.88rem;line-height:1.55;white-space:pre-wrap">{{.Chunk.Text}}</div>
+  </div>
+  {{else}}
+  <p class="muted">Aucun passage ne correspond à cette question.</p>
+  {{end}}
+</div>
+{{end}}
