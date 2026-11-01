@@ -121,8 +121,11 @@ paths:
       tags: [rag]
       summary: Indexe un document (ingestion synchrone)
       description: |
-        Accepte un fichier texte, Markdown, CSV, JSON, log, YAML, XML ou HTML.
-        Les formats binaires (PDF, Office, images) sont refuses. Le document et
+        Accepte un fichier texte, Markdown, CSV, JSON, log, YAML, XML, HTML, un
+        PDF (couche texte convertie en Markdown : titres, listes, paragraphes)
+        ou une image (PNG, JPEG, WebP, GIF, BMP, TIFF). Une image est transcrite par le modele de vision de la
+        configuration active du projet ; sans configuration active, l'upload
+        echoue. Les formats bureautiques (Office) sont refuses. Le document et
         ses passages sont ecrits avant la reponse 201.
       operationId: uploadRAGDocument
       requestBody:
@@ -141,7 +144,7 @@ paths:
                   description: Modele d'embedding ; vide = local-embedding.
             encoding:
               file:
-                contentType: text/plain, text/markdown, text/csv, application/json, application/xml, text/html
+                contentType: text/plain, text/markdown, text/csv, application/json, application/xml, text/html, application/pdf, image/png, image/jpeg, image/webp, image/gif, image/bmp, image/tiff
       responses:
         '201':
           description: Document indexe

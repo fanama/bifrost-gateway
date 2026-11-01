@@ -165,8 +165,8 @@ document.addEventListener('DOMContentLoaded', updateCurlSnippet);
 {{end}}
 
 {{define "embed_placeholder"}}
-<div class="card center muted" style="padding:40px 20px">
-  <div style="font-size:2rem;margin-bottom:8px">🧬</div>
+<div class="card center muted empty-state">
+  <div style="font-size:1.6rem;margin-bottom:8px;opacity:.85">🧬</div>
   <div style="font-size:1.1rem;font-weight:600;color:var(--text);margin-bottom:4px">Aucun embedding généré</div>
   <div style="font-size:0.85rem">Saisissez un texte ou comparez deux phrases ci-dessus pour visualiser leurs vecteurs et similarité.</div>
 </div>
@@ -195,8 +195,8 @@ document.addEventListener('DOMContentLoaded', updateCurlSnippet);
         {{printf "%.2f%%" .SimilarityPercent}}
       </span>
     </div>
-    <div style="height:10px;background:rgba(0,0,0,0.4);border-radius:999px;overflow:hidden;position:relative;margin-bottom:8px">
-      <div style="height:100%;width:{{.SimilarityBarWidth}}%;background:{{if ge .Similarity 0.8}}linear-gradient(90deg,#3b82f6,#22c55e){{else if ge .Similarity 0.5}}var(--accent){{else}}var(--muted){{end}};border-radius:999px;transition:width 0.4s ease"></div>
+    <div class="meter">
+      <div class="meter-fill{{if ge .Similarity 0.8}} meter-ok{{else if ge .Similarity 0.5}} meter-accent{{end}}" style="width:{{.SimilarityBarWidth}}%"></div>
     </div>
     <div style="display:flex;justify-content:space-between;font-size:0.75rem;color:var(--muted)">
       <span>0% (Indépendant)</span>
@@ -225,7 +225,7 @@ document.addEventListener('DOMContentLoaded', updateCurlSnippet);
         <div style="font-size:0.75rem;color:var(--muted);margin-bottom:4px">Aperçu de la distribution des coefficients (premières composantes) :</div>
         <div style="display:flex;align-items:center;gap:2px;height:24px;background:rgba(0,0,0,0.3);padding:2px 4px;border-radius:6px;overflow-x:auto">
           {{range $item.SampleBars}}
-          <div style="flex:1;min-width:3px;height:{{.Height}}%;background:{{if .Positive}}var(--accent){{else}}#f43f5e{{end}};border-radius:1px" title="{{.Value}}"></div>
+          <div style="flex:1;min-width:3px;height:{{.Height}}%;background:{{if .Positive}}var(--accent){{else}}var(--muted){{end}};border-radius:1px" title="{{.Value}}"></div>
           {{end}}
         </div>
       </div>

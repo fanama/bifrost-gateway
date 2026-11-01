@@ -11,7 +11,8 @@ import (
 )
 
 func TestRAGTextExtractorStripsHTML(t *testing.T) {
-	text, err := NewRAGTextExtractor(0).Extract("page.html", []byte("<html><body><h1>Hello</h1><p>world</p></body></html>"))
+	text, err := NewRAGTextExtractor(0).Extract(context.Background(), "p1", "page.html",
+		[]byte("<html><body><h1>Hello</h1><p>world</p></body></html>"))
 	if err != nil {
 		t.Fatalf("extract: %v", err)
 	}
@@ -21,7 +22,8 @@ func TestRAGTextExtractorStripsHTML(t *testing.T) {
 }
 
 func TestRAGTextExtractorRejectsBinary(t *testing.T) {
-	_, err := NewRAGTextExtractor(0).Extract("scan.pdf", []byte("%PDF-1.7"))
+	_, err := NewRAGTextExtractor(0).Extract(context.Background(), "p1", "scan.docx",
+		[]byte("PK\x03\x04binary"))
 	if err == nil {
 		t.Fatal("expected unsupported file type error")
 	}

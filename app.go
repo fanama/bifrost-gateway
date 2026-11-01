@@ -227,12 +227,16 @@ func (a *gatewayApp) buildEmbeddingService() {
 }
 
 // buildRAGService wires document storage, text extraction, the shared
-// embedding router and the shared chat provider into the RAG use case.
+// embedding router and the shared chat provider into the RAG use case. Image
+// uploads are OCR'd by the project's active vision model, so the extractor
+// receives the Bifrost provider as its OCR backend.
 func (a *gatewayApp) buildRAGService() {
+	extractor := infrastructure.NewRAGTextExtractor(0).
+		WithImages(infrastructure.NewRAGImageOCR(a.stores.configs, a.bifrost))
 	a.useCases.rag = application.NewRAGUseCase(
 		infrastructure.NewRAGDocumentStore(a.db),
 		infrastructure.NewRAGChunkStore(a.db),
-		infrastructure.NewRAGTextExtractor(0),
+		extractor,
 		a.embedder,
 		a.stores.configs,
 		infrastructure.NewRAGSettingsStore(a.db),

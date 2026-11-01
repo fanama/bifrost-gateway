@@ -29,7 +29,8 @@ before each call.
 - **Local ONNX engines** — embeddings and chat run in-process through a pure-Go
   ONNX Runtime binding. Artifacts live under `models/onnx/` (gitignored) and are
   downloaded on first start unless `ONNX_AUTO_DOWNLOAD=0`.
-- **Retrieval-augmented generation** — project-scoped document ingestion,
+- **Retrieval-augmented generation** — project-scoped ingestion of text, PDF
+  (parsed into Markdown) and images (OCR through the project's vision model),
   cosine-similarity retrieval in SQLite, and cited answers grounded in the
   retrieved passages under `/v1/rag/*`.
 - **Tier routing and failover** — a local classifier picks `fast`, `balanced`
@@ -129,7 +130,7 @@ flowchart TD
         EmbedPort(["EmbeddingProvider and Classifier"]):::port
         RepoPort(["project, config, key, provider repositories"]):::port
         RagPort(["DocumentRepository, ChunkRepository, SettingsRepository"]):::port
-        MiscPort(["Cache and TextExtractor"]):::port
+        MiscPort(["Cache, TextExtractor and ImageReader"]):::port
     end
 
     subgraph Adapters["Infrastructure: adapters"]
@@ -139,7 +140,7 @@ flowchart TD
         Local(["deterministic local embedder"]):::adapter
         Stores(["SQLite stores behind Adapter[T]"]):::adapter
         Decorators(["cache, failover, tier and embedding routers"]):::adapter
-        Obs(["metrics, config loader, text extractor"]):::adapter
+        Obs(["metrics, config loader, text and PDF extractors, image OCR"]):::adapter
     end
 
     subgraph Backends["Backends"]
@@ -206,9 +207,9 @@ flowchart TD
 ├── infrastructure/
 │   ├── config/  metrics/   # configuration loading, metrics collection
 │   ├── *_store.go          # SQLite repositories
-│   ├── rag_*.go            # RAG stores (incl. settings), text extractor
+│   ├── rag_*.go            # RAG stores, text/PDF-to-Markdown extractors, image OCR
 │   ├── cached*.go          # repository and LLM caches
-│   ├── bifrost*.go         # Bifrost adapters and conversions
+│   ├── bifrost*.go         # Bifrost adapters and conversions (multimodal included)
 │   ├── routing*.go         # tier ladder and failover
 │   ├── onnx*.go            # ONNX embeddings, chat and tokenizers
 │   └── jsonimport.go       # legacy JSON → SQLite migration
@@ -517,6 +518,11 @@ Upload a document to the project's corpus (synchronous):
 curl -X POST http://localhost:4000/v1/rag/documents \
   -H 'Authorization: Bearer sk-bridge-XXXX' \
   -F 'file=@notes.txt'
+
+# A PDF is parsed into Markdown, an image is transcribed by the active model
+curl -X POST http://localhost:4000/v1/rag/documents \
+  -H 'Authorization: Bearer sk-bridge-XXXX' \
+  -F 'file=@rapport-2026.pdf'
 ```
 
 Ask a question; the answer is grounded in the retrieved passages and cites them:
@@ -533,9 +539,31 @@ removes a document, and `POST /v1/rag/search` returns passages without calling
 the model. The same workflow is available in the web UI under **RAG Test**;
 embedding model, `top_k`, chunking and extra instructions are configured per
 project under **RAG Paramètres**. The master key must name the project with
-`X-Project-ID` or `?project_id=`. Supported uploads are text, Markdown, CSV, JSON, log, YAML, XML
-and HTML; PDF and Office files are rejected explicitly. See
-`app-specification.md` for limits and the full design.
+`X-Project-ID` or `?project_id=`.
+
+Supported uploads are text, Markdown, CSV, JSON, log, YAML, XML, HTML, PDF and
+images (PNG, JPEG, WebP, GIF, BMP, TIFF), 25 MiB maximum. Office files are
+rejected explicitly.
+
+- **PDF** — the text layer of every page is parsed into **Markdown**: headings
+are detected by font size (or a short bold line), list items by their bullet or
+number (nesting follows the indent), paragraphs are re-glued across line breaks
+and hyphenated words are reattached. The chunker and the model therefore work
+on structured text instead of one flat run of words. The parser is pure Go
+(`github.com/ledongthuc/pdf`): no Poppler, Java or other system dependency is
+added to the image. A scanned PDF has no text layer, so it is rejected with
+"document has no readable text" unless it was OCR'd beforehand.
+- **Images** — transcribed by the text model of the project's **active
+configuration**, which must accept image parts (for example `gpt-4o`,
+`mistral-small-latest`, `llava`, `qwen2-vl`). The transcription keeps the
+visible text in reading order and falls back to a short factual description
+when the image carries none, so a picture stays searchable. Without an active
+configuration the upload fails with an explicit message.
+
+Chunking targets the configured `chunk_size` but snaps back to the nearest
+paragraph or line boundary, so the Markdown structure survives into the
+passages rather than being cut mid-word. The request and response shapes are in
+`docs/openapi.yaml`, also served at `/openapi.yaml`.
 
 ### Models and errors
 
@@ -643,3 +671,9 @@ CLI flags: `--config`, `--port`, `--db`, `--import-json`.
   use a small, fast local model in `routing.classifier.model`.
 - **A tier keeps failing** — inspect `/monitoring` and the logs; the failing
   tier is cooled down for `routing.cooldown` before it is retried.
+- **Image upload fails with "image OCR needs an active configuration with a
+  vision model"** — activate a configuration whose model accepts image parts
+  for that project, then retry; the transcription reuses the same credential
+  and endpoint as chat.
+- **PDF rejected with "document has no readable text"** — the file is a scan
+  without a text layer; run OCR on it first and upload the resulting text.

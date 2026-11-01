@@ -18,7 +18,7 @@
       <label>Description
         <input name="description" placeholder="optionnel">
       </label>
-      <div style="display:flex;gap:10px">
+      <div class="form-actions">
         <button class="btn" type="submit">Creer le projet</button>
         <button class="btn ghost" type="button" onclick="this.closest('dialog').close()">Annuler</button>
       </div>
@@ -58,7 +58,7 @@
 <body hx-boost="true">
 {{template "nav" .}}
 <main id="main" class="page">
-  <p><a href="/projects">&larr; Retour aux projets</a></p>
+  <p style="font-size:.85rem"><a href="/projects">&larr; Retour aux projets</a></p>
   <div class="page-head">
     <h1>{{.Project.Name}}</h1>
     <button class="btn" type="button" onclick="document.getElementById('config-form-zone').showModal()">+ Nouvelle configuration</button>
@@ -288,7 +288,7 @@
       <textarea name="system_prompt" rows="3" placeholder="instructions systeme (optionnel)">{{if not .IsCreate}}{{.Editing.SystemPrompt}}{{end}}</textarea>
     </label>
 
-    <div style="display:flex;gap:10px">
+    <div class="form-actions">
       <button class="btn" type="submit">{{if .IsCreate}}Creer la configuration{{else}}Enregistrer{{end}}</button>
       <button class="btn ghost" type="button" onclick="this.closest('dialog').close()">Annuler</button>
     </div>
@@ -326,7 +326,7 @@
 
 {{define "project_keys_section"}}
 <div class="page-head" style="margin-top:8px">
-  <h1 style="font-size:1.2rem">API keys</h1>
+  <h2 class="card-title" style="margin:0">API keys</h2>
   <button class="btn" type="button" onclick="document.getElementById('key-form-zone').showModal()">+ Nouvelle cle</button>
 </div>
 
@@ -348,7 +348,7 @@
     <label>Nom
       <input name="name" placeholder="ex : CI / deploy" required>
     </label>
-    <div style="display:flex;gap:10px">
+    <div class="form-actions">
       <button class="btn" type="submit">Creer la cle</button>
       <button class="btn ghost" type="button" onclick="this.closest('dialog').close()">Annuler</button>
     </div>

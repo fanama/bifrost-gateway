@@ -152,7 +152,7 @@ func TestRAGUploadQueryAndDelete(t *testing.T) {
 
 func TestRAGUploadRejectsUnsupportedType(t *testing.T) {
 	mux, secret := newRAGMux(t)
-	rec := ragUpload(t, mux, secret, "scan.pdf", "%PDF-1.7")
+	rec := ragUpload(t, mux, secret, "report.docx", "PK\x03\x04binary")
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
 	}

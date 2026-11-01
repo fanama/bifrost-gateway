@@ -164,7 +164,9 @@ func (f *fakeSettings) Save(_ context.Context, settings *domainrag.Settings) err
 
 type textExtractor struct{}
 
-func (textExtractor) Extract(_ string, content []byte) (string, error) { return string(content), nil }
+func (textExtractor) Extract(_ context.Context, _, _ string, content []byte) (string, error) {
+	return string(content), nil
+}
 
 func newTestService(t *testing.T) (*Service, *fakeDocs, *fakeChunks, *fakeLLM) {
 	t.Helper()

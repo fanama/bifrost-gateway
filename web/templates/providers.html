@@ -32,7 +32,7 @@
     <label>Clé API par defaut
       <input name="api_key" type="password" placeholder="ex : sk-... ou clé API du provider" value="{{if .Editing}}{{.Editing.APIKey}}{{end}}">
     </label>
-    <div style="display:flex;gap:10px">
+    <div class="form-actions">
       <button class="btn" type="submit">{{if .Editing}}Enregistrer{{else}}Creer le provider{{end}}</button>
       <button class="btn ghost" type="button" onclick="this.closest('dialog').close()">Annuler</button>
     </div>

@@ -93,9 +93,18 @@ type ChunkRepository interface {
 	DeleteByDocument(ctx context.Context, projectID, documentID string) error
 }
 
-// TextExtractor turns raw upload bytes into plain text.
+// TextExtractor turns raw upload bytes into plain text. The context and the
+// project are forwarded so an adapter that delegates to a project-scoped model
+// (image OCR) can resolve it.
 type TextExtractor interface {
-	Extract(fileName string, content []byte) (string, error)
+	Extract(ctx context.Context, projectID, fileName string, content []byte) (string, error)
+}
+
+// ImageReader transcribes an image into text. It is a separate port so the
+// extractor still works without OCR: image uploads are then rejected with an
+// explicit message instead of being indexed as garbage.
+type ImageReader interface {
+	ReadImage(ctx context.Context, projectID, fileName string, content []byte) (string, error)
 }
 
 // ErrDocumentNotFound is returned when a document does not belong to the

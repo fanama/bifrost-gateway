@@ -27,7 +27,7 @@
     {{template "rag_settings_form" .}}
   </section>
   {{else}}
-  <div class="card center muted" style="padding:40px 20px">
+  <div class="card center muted empty-state">
     Aucun projet. <a href="/projects">Créez un projet</a> avant de configurer le RAG.
   </div>
   {{end}}
@@ -38,7 +38,7 @@
 {{end}}
 
 {{define "rag_settings_form"}}
-{{if .Saved}}<div class="toast" style="background:rgba(34,197,94,.12);border:1px solid var(--ok);color:var(--ok)">Paramètres enregistrés.</div>{{end}}
+{{if .Saved}}<div class="toast ok">Paramètres enregistrés.</div>{{end}}
 <div class="card">
   <form hx-post="/rag/settings" hx-target="#rag-settings-body" hx-swap="innerHTML">
     <input type="hidden" name="project_id" value="{{.Settings.ProjectID}}">
@@ -64,7 +64,7 @@
     <label>Consigne supplémentaire (optionnel)
       <textarea name="system_prompt" rows="4" placeholder="Ex : réponds en français et cite toujours les sources.">{{.Settings.SystemPrompt}}</textarea>
     </label>
-    <p class="muted" style="font-size:.8rem">Le découpage s'applique aux prochains imports. Changer de modèle d'embedding rend les passages existants incompatibles : réindexez les documents depuis la page de test.</p>
+    <p class="note">Le découpage s'applique aux prochains imports. Changer de modèle d'embedding rend les passages existants incompatibles : réindexez les documents depuis la page de test.</p>
     <button class="btn" type="submit">Enregistrer</button>
   </form>
 </div>
@@ -94,31 +94,31 @@
       </select>
     </label>
     {{with .Settings}}
-    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px">
+    <div class="meta-row" style="margin-top:10px">
       <span class="badge ok">{{.EmbeddingModel}}</span>
       <span class="badge">top_k {{.TopK}}</span>
       <span class="badge">chunks {{.ChunkSize}} / {{.ChunkOverlap}}</span>
-      <a class="badge" href="/rag/settings?project_id={{.ProjectID}}">modifier les paramètres</a>
+      <a class="btn ghost small" href="/rag/settings?project_id={{.ProjectID}}">Modifier</a>
     </div>
     {{end}}
   </div>
 
   <div class="grid2">
     <div class="card">
-      <h3 style="margin-top:0;font-size:.95rem">Ajouter un document</h3>
+      <h3 class="card-title">Ajouter un document</h3>
       <form hx-post="/rag/test/upload" hx-encoding="multipart/form-data" hx-target="#rag-documents" hx-swap="innerHTML" hx-indicator="#rag-upload-loading">
         <input type="hidden" name="project_id" value="{{.SelectedProjectID}}">
         <label>Fichier
-          <input type="file" name="file" required accept=".txt,.md,.markdown,.csv,.json,.log,.yaml,.yml,.xml,.html,.htm">
+          <input type="file" name="file" required accept=".txt,.md,.markdown,.csv,.json,.log,.yaml,.yml,.xml,.html,.htm,.pdf,.png,.jpg,.jpeg,.webp,.gif,.bmp,.tif,.tiff">
         </label>
-        <p class="muted" style="font-size:.78rem">Formats texte uniquement (PDF et bureautique non pris en charge), 25 Mo maximum.</p>
+        <p class="note">Textes, PDF (couche texte) et images (OCR par le modèle de vision du projet), 25 Mo maximum.</p>
         <button class="btn" type="submit">Indexer</button>
-        <span id="rag-upload-loading" class="htmx-indicator muted" style="font-size:.82rem">Extraction et embedding…</span>
+        <span id="rag-upload-loading" class="htmx-indicator muted hint">Extraction et embedding…</span>
       </form>
     </div>
 
     <div class="card">
-      <h3 style="margin-top:0;font-size:.95rem">Poser une question</h3>
+      <h3 class="card-title">Poser une question</h3>
       <form hx-post="/rag/test/query" hx-target="#rag-answer" hx-swap="innerHTML" hx-indicator="#rag-query-loading">
         <input type="hidden" name="project_id" value="{{.SelectedProjectID}}">
         <label>Question
@@ -136,23 +136,23 @@
           </label>
         </div>
         <button class="btn" type="submit">Lancer</button>
-        <span id="rag-query-loading" class="htmx-indicator muted" style="font-size:.82rem">Recherche en cours…</span>
+        <span id="rag-query-loading" class="htmx-indicator muted hint">Recherche en cours…</span>
       </form>
     </div>
   </div>
 
   <section class="card">
-    <h3 style="margin-top:0;font-size:.95rem">Documents indexés</h3>
+    <h3 class="card-title">Documents indexés</h3>
     <section id="rag-documents">
       {{template "rag_documents_body" .}}
     </section>
   </section>
 
   <div id="rag-answer">
-    <div class="card center muted" style="padding:34px 20px">La réponse et les sources apparaîtront ici.</div>
+    <div class="card center muted empty-state">La réponse et les sources apparaîtront ici.</div>
   </div>
   {{else}}
-  <div class="card center muted" style="padding:40px 20px">
+  <div class="card center muted empty-state">
     Aucun projet. <a href="/projects">Créez un projet</a> avant d'utiliser le RAG.
   </div>
   {{end}}
@@ -163,7 +163,7 @@
 {{end}}
 
 {{define "rag_documents_body"}}
-{{if .Message}}<div class="toast" style="background:rgba(34,197,94,.12);border:1px solid var(--ok);color:var(--ok)">{{.Message}}</div>{{end}}
+{{if .Message}}<div class="toast ok">{{.Message}}</div>{{end}}
 <div class="table-wrap">
   <table>
     <thead><tr><th>Fichier</th><th>Passages</th><th>Modèle</th><th>Taille</th><th>Indexé le</th><th></th></tr></thead>
@@ -193,14 +193,14 @@
 
 {{define "rag_answer"}}
 <div class="card">
-  <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px;flex-wrap:wrap">
-    <h3 style="margin:0;font-size:1rem">Réponse</h3>
-    <div style="display:flex;gap:8px;flex-wrap:wrap">
+  <div class="card-head">
+    <h3 class="card-title" style="margin:0">Réponse</h3>
+    <div class="meta-row">
       <span class="badge {{if .Result.HasContext}}ok{{end}}">{{if .Result.HasContext}}contexte trouvé{{else}}aucun passage{{end}}</span>
       {{if .Result.Model}}<span class="badge">{{.Result.Model}}</span>{{end}}
     </div>
   </div>
-  <p class="muted" style="font-size:.82rem">Question : {{.Question}}</p>
+  <p class="muted hint">Question : {{.Question}}</p>
   <div style="white-space:pre-wrap;line-height:1.6">{{.Result.Answer}}</div>
   {{if .Sources}}
   <h4 style="font-size:.85rem;margin:18px 0 8px">Sources</h4>
@@ -220,10 +220,10 @@
 
 {{define "rag_search"}}
 <div class="card">
-  <h3 style="margin:0 0 12px;font-size:1rem">Passages retrouvés</h3>
-  <p class="muted" style="font-size:.82rem">Question : {{.Question}}</p>
+  <h3 class="card-title">Passages retrouvés</h3>
+  <p class="muted hint">Question : {{.Question}}</p>
   {{range .Chunks}}
-  <div style="background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:10px">
+  <div class="source-chunk">
     <div style="display:flex;justify-content:space-between;gap:10px;margin-bottom:6px">
       <strong style="font-size:.88rem">{{.Chunk.FileName}} · passage #{{.Chunk.Ordinal}}</strong>
       <span class="badge">{{printf "%.3f" .Score}}</span>

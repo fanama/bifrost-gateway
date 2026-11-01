@@ -28,7 +28,7 @@ func (s *Service) Ingest(
 		return nil, err
 	}
 	opts = applyIngestSettings(settings, opts)
-	text, err := s.extractor.Extract(fileName, content)
+	text, err := s.extractor.Extract(ctx, projectID, fileName, content)
 	if err != nil {
 		return nil, err
 	}

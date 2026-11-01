@@ -3,6 +3,7 @@ module bridge-gateway
 go 1.26.0
 
 require (
+	github.com/ledongthuc/pdf v0.0.0-20261020125853-5e46805f718e
 	github.com/maximhq/bifrost/core v1.4.4
 	github.com/shota3506/onnxruntime-purego v0.0.0-20260315223538-8db8bd7424b2
 	golang.org/x/text v0.33.0
