@@ -11,6 +11,10 @@ info:
     (`message`, `type`, `param`, `code`).
 
     La meme specification est servie en local : `GET /openapi.yaml`.
+
+    Les parametres RAG par projet (modele d'embedding, `top_k`, decoupage et
+    consigne additionnelle) se configurent dans l'interface web
+    (`/rag/settings`) et servent de valeurs par defaut aux routes `/v1/rag/*`.
   version: 1.0.0
 servers:
   - url: http://localhost:4000

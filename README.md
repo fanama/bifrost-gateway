@@ -45,25 +45,49 @@ before each call.
 
 ```mermaid
 flowchart TD
-    subgraph Delivery [Delivery]
-        API[handlers/ — OpenAI API]
-        UI[web/ — HTMX UI]
+    %% Dark fills + light strokes keep the diagram readable in light and dark mode.
+    classDef delivery fill:#1e40af,stroke:#bfdbfe,stroke-width:2px,color:#fff
+    classDef app fill:#047857,stroke:#a7f3d0,stroke-width:2px,color:#fff
+    classDef core fill:#5b21b6,stroke:#ddd6fe,stroke-width:2px,color:#fff
+    classDef infra fill:#b91c1c,stroke:#fecaca,stroke-width:2px,color:#fff
+    classDef store fill:#374151,stroke:#d1d5db,stroke-width:2px,color:#fff
+    classDef root fill:#0f766e,stroke:#99f6e4,stroke-width:2px,color:#fff
+
+    subgraph Delivery["Delivery"]
+        direction TB
+        API(["handlers/ — OpenAI + RAG API"]):::delivery
+        UI(["web/ — HTMX UI + RAG pages"]):::delivery
     end
-    subgraph App [Application]
-        UC[application/ — use cases]
+
+    subgraph App["Application"]
+        direction TB
+        UC(["application/ — gateway use cases"]):::app
+        RAG(["application/rag — ingest, query, settings"]):::app
     end
-    subgraph Core [Domain]
-        D[domain/ — entities, ports, rules]
+
+    subgraph Core["Domain"]
+        direction TB
+        D(["domain/ — entities, ports, rules"]):::core
+        DR(["domain/rag — documents, chunks, ranking"]):::core
     end
-    subgraph Adapters [Infrastructure]
-        I[infrastructure/ — SQLite, Bifrost, ONNX, cache, metrics]
+
+    subgraph Adapters["Infrastructure"]
+        direction TB
+        I(["infrastructure/ — SQLite, Bifrost, ONNX, cache, metrics"]):::infra
+        SQL[("SQLite: projects, configs, keys, RAG chunks")]:::store
     end
-    API --> UC
-    UI --> UC
-    UC --> D
-    I --> D
-    Root[app.go / app_server.go / wiring.go] -. composition root .-> Delivery
-    Root -. composition root .-> Adapters
+
+    Root{{"Composition root: app.go, app_server.go, wiring.go"}}:::root
+    
+    Root -. assembles .-> Core
+    Root -. assembles .-> Delivery
+    Root -. assembles .-> Adapters
+    Root -. assembles .-> App
+
+    style Delivery fill:none,stroke:#3b82f6,stroke-width:2px,color:#3b82f6
+    style App fill:none,stroke:#059669,stroke-width:2px,stroke-dasharray:5 5,color:#059669
+    style Core fill:none,stroke:#8b5cf6,stroke-width:2px,color:#8b5cf6
+    style Adapters fill:none,stroke:#dc2626,stroke-width:2px,stroke-dasharray:5 5,color:#dc2626
 ```
 
 Dependencies only point inward:
@@ -72,6 +96,68 @@ Dependencies only point inward:
 handlers/  web/  ──►  application/  ──►  domain/
 infrastructure/  ──────────────────────►  domain/
 app.go + wiring.go = composition root (the only place that assembles everything)
+```
+
+### Ports and adapters at runtime
+
+The same layers seen as a call path: delivery calls a use case, the use case
+talks only to a domain port, and the composition root decides which adapter
+implements that port.
+
+```mermaid
+flowchart TD
+    classDef driver fill:#374151,stroke:#d1d5db,stroke-width:2px,color:#fff
+    classDef service fill:#047857,stroke:#a7f3d0,stroke-width:2px,color:#fff
+    classDef port fill:#0f766e,stroke:#99f6e4,stroke-width:2px,color:#fff
+    classDef adapter fill:#1e40af,stroke:#bfdbfe,stroke-width:2px,color:#fff
+    classDef external fill:#c2410c,stroke:#fed7aa,stroke-width:2px,color:#fff
+
+    Client((API client)):::driver
+    Client --> Delivery(["handlers/ and web/ consumer ports"]):::driver
+
+    subgraph Services["Application: use cases"]
+        direction TB
+        ChatCase(["chat and embedding use cases"]):::service
+        Tenancy(["project, config, provider, catalog"]):::service
+        RagCase(["rag: ingest, query, settings"]):::service
+        AuthCase(["auth: API key verification"]):::service
+    end
+
+    subgraph Ports["Domain ports: interfaces, no I/O"]
+        direction TB
+        LlmPort(["LLMProvider and StreamingLLMProvider"]):::port
+        EmbedPort(["EmbeddingProvider and Classifier"]):::port
+        RepoPort(["project, config, key, provider repositories"]):::port
+        RagPort(["DocumentRepository, ChunkRepository, SettingsRepository"]):::port
+        MiscPort(["Cache and TextExtractor"]):::port
+    end
+
+    subgraph Adapters["Infrastructure: adapters"]
+        direction TB
+        Bifrost(["Bifrost provider adapter"]):::adapter
+        Onnx(["ONNX embeddings and SmolLM2 chat"]):::adapter
+        Local(["deterministic local embedder"]):::adapter
+        Stores(["SQLite stores behind Adapter[T]"]):::adapter
+        Decorators(["cache, failover, tier and embedding routers"]):::adapter
+        Obs(["metrics, config loader, text extractor"]):::adapter
+    end
+
+    subgraph Backends["Backends"]
+        direction TB
+        Remote(["Ollama, OpenAI, Mistral, Gemini, Anthropic, Groq"]):::external
+        Sqlite[("SQLite file")]:::external
+        Runtime(["ONNX Runtime, in process"]):::external
+    end
+
+    Delivery --> Services
+    Services --> Ports
+    Ports -.-> Adapters
+    Adapters --> Backends
+
+    style Services fill:none,stroke:#8b5cf6,stroke-width:2px,stroke-dasharray:5 5,color:#8b5cf6
+    style Ports fill:none,stroke:#0891b2,stroke-width:2px,stroke-dasharray:5 5,color:#0891b2
+    style Adapters fill:none,stroke:#3b82f6,stroke-width:2px,color:#3b82f6
+    style Backends fill:none,stroke:#ea580c,stroke-width:2px,stroke-dasharray:5 5,color:#ea580c
 ```
 
 ### Layer rules
@@ -108,7 +194,7 @@ app.go + wiring.go = composition root (the only place that assembles everything)
 │   ├── monitoring/         # metrics snapshot types
 │   ├── project/            # Project and APIKey entities
 │   ├── provider/           # Provider and catalog model entities
-│   ├── rag/                # RAG entities, ports, chunking, ranking, prompt
+│   ├── rag/                # documents, chunks, settings, chunking, ranking, prompt
 │   ├── routing/            # tier rules, failure classification, cooldown keys
 │   └── shared/             # cache, ID and repository contracts
 ├── application/
@@ -116,11 +202,11 @@ app.go + wiring.go = composition root (the only place that assembles everything)
 │   ├── entity/             # generic CRUD use case
 │   ├── project/            # projects and API keys
 │   ├── provider/
-│   └── rag/                # ingestion, retrieval and grounded answers
+│   └── rag/                # ingestion, retrieval, grounded answers, settings
 ├── infrastructure/
 │   ├── config/  metrics/   # configuration loading, metrics collection
 │   ├── *_store.go          # SQLite repositories
-│   ├── rag_*.go            # RAG stores and text extractor
+│   ├── rag_*.go            # RAG stores (incl. settings), text extractor
 │   ├── cached*.go          # repository and LLM caches
 │   ├── bifrost*.go         # Bifrost adapters and conversions
 │   ├── routing*.go         # tier ladder and failover
@@ -128,7 +214,9 @@ app.go + wiring.go = composition root (the only place that assembles everything)
 │   └── jsonimport.go       # legacy JSON → SQLite migration
 ├── handlers/               # OpenAI-compatible HTTP delivery
 │   ├── chat/  embeddings/  models/  rag/  httpx/
-├── web/                    # HTMX controllers per feature
+├── web/                    # HTMX controllers per feature (incl. RAG pages)
+│   ├── rag.go              # RAG settings page and project selection
+│   ├── rag_test_page.go    # RAG upload, corpus, query/search handlers
 │   ├── templates/  static/
 ├── docs/                   # embedded OpenAPI document
 ├── tests/                  # end-to-end delivery tests
@@ -282,10 +370,33 @@ port. An explicit `--port` flag wins over the environment.
 ## Persistence and cache
 
 **SQLite.** All persistence goes through one file (`data/bridge.db` by default,
-override with `--db`). The schema is created at startup and legacy JSON files
-from `data/` are imported idempotently: imported files are renamed to
-`.imported`, existing IDs are never overwritten, and re-running the import does
-not duplicate records.
+override with `--db`). Every table uses `(id TEXT PRIMARY KEY, payload TEXT NOT
+NULL)` with JSON payloads and JSON indexes on filtered fields:
+
+| Table | Contents |
+|---|---|
+| `projects` | Projects |
+| `chat_configs` | Chat configurations |
+| `api_keys` | API key metadata and SHA-256 digest |
+| `providers` | Provider endpoints |
+| `catalog_models` | Registered models |
+| `rag_settings` | Per-project RAG parameters (embedding model, top_k, chunking, prompt) |
+| `rag_documents` | Indexed RAG documents |
+| `rag_chunks` | Embedded passages and vectors |
+
+```mermaid
+erDiagram
+    PROJECTS ||--o{ CHAT_CONFIGS : owns
+    PROJECTS ||--o{ API_KEYS : owns
+    PROJECTS ||--o{ RAG_DOCUMENTS : owns
+    PROJECTS ||--|| RAG_SETTINGS : configures
+    RAG_DOCUMENTS ||--o{ RAG_CHUNKS : contains
+    PROVIDERS ||--o{ CATALOG_MODELS : serves
+```
+
+The schema is created at startup and legacy JSON files from `data/` are
+imported idempotently: imported files are renamed to `.imported`, existing IDs
+are never overwritten, and re-running the import does not duplicate records.
 
 **In-memory cache.** Repository reads use a short TTL (15 s by default) so UI
 edits become visible quickly. LLM responses use a separate cache (5 min by
