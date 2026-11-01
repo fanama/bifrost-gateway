@@ -88,7 +88,8 @@ type MetricsCollector struct {
 	errors  []domain.ErrorMetric
 	buckets [metricsTimelineSeconds]timelineSlot
 
-	llm llmAccumulator
+	llm  llmAccumulator
+	logs []domain.CallLog
 }
 
 // NewMetricsCollector cree un collecteur dont l'uptime demarre maintenant.

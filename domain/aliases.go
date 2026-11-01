@@ -130,6 +130,7 @@ type (
 	RuntimeMetrics  = monitoring.RuntimeMetrics
 	LLMMetrics      = monitoring.LLMMetrics
 	LLMModelMetric  = monitoring.LLMModelMetric
+	CallLog         = monitoring.CallLog
 )
 
 // Shared repository/cache primitives.

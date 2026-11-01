@@ -82,9 +82,12 @@ type ragService interface {
 	Search(ctx context.Context, projectID, question string, opts application.RAGQueryOptions) ([]domain.RetrievedChunk, error)
 }
 
-// metricsService rend un instantane des compteurs de supervision. Le serveur UI
-// ne depend pas du collecteur concret : un stub suffit aux tests, et un autre
-// backend (Prometheus, OTel) remplacerait l'adaptateur sans changer la page.
+// metricsService rend un instantane des compteurs de supervision et le journal
+// des appels LLM. Le serveur UI ne depend pas du collecteur concret : un stub
+// suffit aux tests, et un autre backend (Prometheus, OTel) remplacerait
+// l'adaptateur sans changer la page.
 type metricsService interface {
 	Snapshot() domain.MetricsSnapshot
+	// Logs rend les derniers appels LLM, le plus recent d'abord.
+	Logs() []domain.CallLog
 }

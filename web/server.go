@@ -108,9 +108,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /embeddings-test", s.embeddings.pageEmbeddings)
 	mux.HandleFunc("POST /embeddings-test/compute", s.embeddings.computeEmbeddings)
 
-	mux.HandleFunc("GET /monitoring", s.monitoring.pageMonitoring)
-	mux.HandleFunc("GET /monitoring/stats", s.monitoring.stats)
-	mux.HandleFunc("GET /monitoring/metrics.json", s.monitoring.metricsJSON)
+	s.registerMonitoring(mux)
 
 	mux.HandleFunc("GET /models", s.models.pageModels)
 	mux.HandleFunc("POST /models", s.models.createModel)
@@ -138,6 +136,18 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /configs", s.redirectToProjects)
 
 	mux.Handle("GET /static/", http.FileServer(http.FS(files)))
+}
+
+// registerMonitoring publie le tableau de bord, son fragment auto-rafraichi,
+// ses snapshots et le journal des appels LLM. Le groupe est sorti de Register
+// pour garder la table de routing lisible.
+func (s *Server) registerMonitoring(mux *http.ServeMux) {
+	mux.HandleFunc("GET /monitoring", s.monitoring.pageMonitoring)
+	mux.HandleFunc("GET /monitoring/stats", s.monitoring.stats)
+	mux.HandleFunc("GET /monitoring/metrics.json", s.monitoring.metricsJSON)
+	mux.HandleFunc("GET /monitoring/logs", s.monitoring.logsModal)
+	mux.HandleFunc("GET /monitoring/logs.json", s.monitoring.logsJSON)
+	mux.HandleFunc("GET /monitoring/logs.csv", s.monitoring.logsCSV)
 }
 
 func (s *Server) redirectToProjects(w http.ResponseWriter, r *http.Request) {

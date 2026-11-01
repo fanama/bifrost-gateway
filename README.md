@@ -277,6 +277,9 @@ port is configured.
 | `/monitoring` | GET | Monitoring dashboard |
 | `/monitoring/stats` | GET | Auto-refreshing HTMX fragment |
 | `/monitoring/metrics.json` | GET | JSON metrics snapshot |
+| `/monitoring/logs` | GET | LLM call log modal fragment (inputs and outputs) |
+| `/monitoring/logs.json` | GET | LLM call log export (JSON download) |
+| `/monitoring/logs.csv` | GET | LLM call log export (CSV download) |
 | `/rag/settings` | GET/POST | Per-project RAG parameters |
 | `/rag/test` | GET | RAG upload, corpus and query test bench |
 | `/rag/test/upload` | POST | Index a document from the test page |
@@ -431,6 +434,16 @@ cancellation are not. Routing is disabled by default in `config.yaml`.
 route counts, recent errors, Go runtime statistics and LLM calls.
 `/monitoring/metrics.json` returns the same snapshot for scraping or uptime
 checks. Metrics are collected in-process; no agent is required.
+
+The **Logs** button opens a modal with the last 100 LLM calls: the messages sent
+to the provider, the answer it produced, the model that actually served it, the
+latency and any error. The list filters by provider, model, status (`ok` /
+error) and date range (`from` / `to`, inclusive whole days in local time); the
+JSON (`/monitoring/logs.json`) and CSV (`/monitoring/logs.csv`) exports accept
+the same query parameters, so a download contains exactly what the modal shows.
+Entries are kept in
+memory only, bounded, and each text field is truncated at 4000 characters; a
+cache hit is not a provider call, so it does not appear in the journal.
 
 ## Local ONNX models
 

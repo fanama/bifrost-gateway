@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"bridge-gateway/domain"
 )
@@ -206,6 +207,63 @@ func (f fakeStreamingLLM) ChatStream(context.Context, *domain.ChatConfig, []doma
 	events <- domain.StreamEvent{Delta: "!", Model: "gemma", Done: true}
 	close(events)
 	return events, nil
+}
+
+func TestMetricsCollectorKeepsBoundedLLMLog(t *testing.T) {
+	collector := NewMetricsCollector()
+	for i := 0; i < metricsLogHistory+10; i++ {
+		collector.RecordLLMLog(domain.CallLog{Provider: "ollama", Model: "gemma", Input: fmt.Sprintf("msg %d", i)})
+	}
+
+	logs := collector.Logs()
+	if got, want := len(logs), metricsLogHistory; got != want {
+		t.Fatalf("logs = %d, want %d", got, want)
+	}
+	// Le journal expose le plus recent d'abord et a oublie les plus anciens.
+	if got, want := logs[0].Input, fmt.Sprintf("msg %d", metricsLogHistory+9); got != want {
+		t.Fatalf("newest entry = %q, want %q", got, want)
+	}
+
+	collector.RecordLLMLog(domain.CallLog{Output: strings.Repeat("é", metricsLogMaxField+10)})
+	trimmed := collector.Logs()[0].Output
+	if !strings.HasSuffix(trimmed, "(tronqué)") {
+		t.Fatalf("oversized field was not truncated: %q", trimmed[len(trimmed)-40:])
+	}
+	if !utf8.ValidString(trimmed) {
+		t.Fatal("truncation split a multi-byte rune")
+	}
+}
+
+func TestMeasuredLLMProviderRecordsCallLog(t *testing.T) {
+	collector := NewMetricsCollector()
+	cfg := &domain.ChatConfig{Provider: "ollama", Model: "gemma"}
+	provider := NewMeasuredLLMProvider(fakeStreamingLLM{fakeLLM{result: domain.LLMResult{Model: "gemma"}}}, collector)
+
+	stream, err := provider.ChatStream(context.Background(), cfg, []domain.ChatMessage{{Role: "user", Content: "Bonjour"}})
+	if err != nil {
+		t.Fatalf("chat stream: %v", err)
+	}
+	for range stream {
+	}
+
+	logs := collector.Logs()
+	if len(logs) != 1 {
+		t.Fatalf("logs = %d, want 1", len(logs))
+	}
+	entry := logs[0]
+	if entry.Provider != "ollama" || entry.Model != "gemma" {
+		t.Fatalf("entry = %+v, want ollama/gemma", entry)
+	}
+	if entry.Input != "user: Bonjour" {
+		t.Fatalf("input = %q, want the sent message", entry.Input)
+	}
+	// Les fragments sont reconstitues : le journal garde la reponse complete.
+	if entry.Output != "hello!" {
+		t.Fatalf("output = %q, want the full streamed answer", entry.Output)
+	}
+	if !entry.Stream {
+		t.Fatal("streamed call was logged as a blocking one")
+	}
 }
 
 func TestMeasuredLLMProviderCountsCallsStreamsAndErrors(t *testing.T) {

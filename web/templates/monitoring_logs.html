@@ -1,0 +1,67 @@
+{{define "monitoring_logs"}}
+<div class="log-head">
+  <div>
+    <h2>Logs des appels LLM</h2>
+    <p class="muted">{{len .Logs}} sur {{.Total}} appel(s) en mémoire · entrées et sorties, les plus récentes d'abord</p>
+  </div>
+  <div class="actions">
+    <a class="btn ghost small" href="/monitoring/logs.json{{.ExportQuery}}" download="bridge-gateway-logs.json" hx-boost="false">Exporter JSON</a>
+    <a class="btn ghost small" href="/monitoring/logs.csv{{.ExportQuery}}" download="bridge-gateway-logs.csv" hx-boost="false">Exporter CSV</a>
+    <button class="btn ghost small" type="button" hx-get="/monitoring/logs" hx-target="#logs-modal" hx-swap="innerHTML">Rafraîchir</button>
+    <button class="btn ghost small" type="button" onclick="this.closest('dialog').close()">Fermer</button>
+  </div>
+</div>
+<form class="log-filters" hx-get="/monitoring/logs" hx-target="#logs-modal" hx-swap="innerHTML" hx-trigger="change">
+  <label>Provider
+    <select name="provider">
+      <option value="">Tous</option>
+      {{range .Providers}}<option value="{{.}}" {{if eq . $.Filter.Provider}}selected{{end}}>{{.}}</option>{{end}}
+    </select>
+  </label>
+  <label>Modèle
+    <select name="model">
+      <option value="">Tous</option>
+      {{range .Models}}<option value="{{.}}" {{if eq . $.Filter.Model}}selected{{end}}>{{.}}</option>{{end}}
+    </select>
+  </label>
+  <label>Statut
+    <select name="status">
+      <option value="">Tous</option>
+      <option value="ok" {{if eq $.Filter.Status "ok"}}selected{{end}}>OK</option>
+      <option value="error" {{if eq $.Filter.Status "error"}}selected{{end}}>Erreur</option>
+    </select>
+  </label>
+  <label>Du
+    <input type="date" name="from" value="{{.Filter.From}}">
+  </label>
+  <label>Au
+    <input type="date" name="to" value="{{.Filter.To}}">
+  </label>
+  <button class="btn ghost small" type="submit">Filtrer</button>
+  {{if .Filter.Active}}<button class="btn ghost small" type="button" hx-get="/monitoring/logs" hx-target="#logs-modal" hx-swap="innerHTML">Réinitialiser</button>{{end}}
+</form>
+{{range .Logs}}
+<article class="log-entry{{if .Error}} log-entry-error{{end}}">
+  <header class="log-meta">
+    <span class="badge {{if .Error}}err{{else}}ok{{end}}">{{if .Error}}erreur{{else}}ok{{end}}</span>
+    <strong>{{.Provider}}{{if .Model}} · {{.Model}}{{end}}</strong>
+    {{if .Stream}}<span class="badge">flux</span>{{end}}
+    <span class="muted">{{dur .Duration}}</span>
+    <span class="muted">{{.Time.Format "02/01/2006 15:04:05"}}</span>
+  </header>
+  <div class="log-io">
+    <div>
+      <span class="log-label">Entrée</span>
+      <pre>{{if .Input}}{{.Input}}{{else}}<span class="muted">(aucun message)</span>{{end}}</pre>
+    </div>
+    <div>
+      <span class="log-label">Sortie</span>
+      <pre>{{if .Output}}{{.Output}}{{else}}<span class="muted">(vide)</span>{{end}}</pre>
+    </div>
+  </div>
+  {{if .Error}}<p class="log-error">{{.Error}}</p>{{end}}
+</article>
+{{else}}
+<p class="muted center">Aucun appel ne correspond aux filtres (journal vide, ou uniquement des hits de cache).</p>
+{{end}}
+{{end}}

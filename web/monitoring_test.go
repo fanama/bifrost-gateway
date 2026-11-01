@@ -13,9 +13,12 @@ import (
 
 type stubMetrics struct {
 	snapshot domain.MetricsSnapshot
+	logs     []domain.CallLog
 }
 
 func (s stubMetrics) Snapshot() domain.MetricsSnapshot { return s.snapshot }
+
+func (s stubMetrics) Logs() []domain.CallLog { return s.logs }
 
 func newMonitoringServer(t *testing.T) (*http.ServeMux, domain.MetricsSnapshot) {
 	t.Helper()
@@ -54,6 +57,15 @@ func newMonitoringServer(t *testing.T) (*http.ServeMux, domain.MetricsSnapshot) 
 		LLM: domain.LLMMetrics{
 			Calls: 5, Models: []domain.LLMModelMetric{{Provider: "ollama", Model: "gemma", Calls: 5}},
 		},
+	}, logs: []domain.CallLog{
+		{
+			Time: time.Date(2026, 10, 30, 10, 0, 0, 0, time.Local), Provider: "ollama", Model: "gemma",
+			Duration: 3 * time.Millisecond, Input: "user: Bonjour", Output: "Bonjour !",
+		},
+		{
+			Time: time.Date(2026, 10, 31, 12, 0, 0, 0, time.Local), Provider: "openai", Model: "gpt-4o",
+			Duration: 5 * time.Millisecond, Input: "user: Salut", Error: "provider down",
+		},
 	}}
 
 	server, err := NewServer(nil, nil, nil, nil, nil, nil, nil, nil, metrics, "http://localhost:11434")
@@ -88,6 +100,161 @@ func TestMonitoringPageRendersDashboard(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Fatalf("page is missing %q", want)
 		}
+	}
+	// La modale de logs et son declencheur voyagent avec la page.
+	for _, want := range []string{`id="logs-modal"`, `hx-get="/monitoring/logs"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("page is missing %q", want)
+		}
+	}
+}
+
+func TestMonitoringLogsModalShowsInputsAndOutputs(t *testing.T) {
+	mux, _ := newMonitoringServer(t)
+
+	recorder := httptest.NewRecorder()
+	mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/monitoring/logs", nil))
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recorder.Code)
+	}
+	body := recorder.Body.String()
+	if strings.Contains(body, "<html") || strings.Contains(body, "<body") {
+		t.Fatal("logs endpoint must return a fragment, not a full page")
+	}
+	for _, want := range []string{
+		"Logs des appels LLM", "ollama", "gemma", "Entrée", "Sortie",
+		"user: Bonjour", "Bonjour !",
+		"/monitoring/logs.json", "/monitoring/logs.csv",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("logs fragment is missing %q", want)
+		}
+	}
+}
+
+func TestMonitoringLogsCSVExport(t *testing.T) {
+	mux, _ := newMonitoringServer(t)
+
+	recorder := httptest.NewRecorder()
+	mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/monitoring/logs.csv", nil))
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recorder.Code)
+	}
+	if got := recorder.Header().Get("Content-Type"); !strings.HasPrefix(got, "text/csv") {
+		t.Fatalf("content type = %q, want text/csv", got)
+	}
+	if got := recorder.Header().Get("Content-Disposition"); !strings.Contains(got, "attachment") {
+		t.Fatalf("content disposition = %q, want an attachment", got)
+	}
+
+	lines := strings.Split(strings.TrimSpace(recorder.Body.String()), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("csv lines = %d, want a header and two entries: %q", len(lines), recorder.Body.String())
+	}
+	if got, want := lines[0], "time,provider,model,stream,duration_ms,input,output,error"; got != want {
+		t.Fatalf("csv header = %q, want %q", got, want)
+	}
+	if !strings.Contains(recorder.Body.String(), "ollama,gemma,false,3.00,user: Bonjour,Bonjour !,") {
+		t.Fatalf("csv is missing the successful call: %q", recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "openai,gpt-4o,false,5.00,user: Salut,,provider down") {
+		t.Fatalf("csv is missing the failed call: %q", recorder.Body.String())
+	}
+}
+
+func TestMonitoringLogsJSONExport(t *testing.T) {
+	mux, _ := newMonitoringServer(t)
+
+	recorder := httptest.NewRecorder()
+	mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/monitoring/logs.json", nil))
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recorder.Code)
+	}
+	if got := recorder.Header().Get("Content-Type"); !strings.HasPrefix(got, "application/json") {
+		t.Fatalf("content type = %q, want application/json", got)
+	}
+
+	var decoded []domain.CallLog
+	if err := json.Unmarshal(recorder.Body.Bytes(), &decoded); err != nil {
+		t.Fatalf("decode logs: %v", err)
+	}
+	if len(decoded) != 2 {
+		t.Fatalf("logs = %d, want 2", len(decoded))
+	}
+	if decoded[0].Input != "user: Bonjour" || decoded[0].Output != "Bonjour !" {
+		t.Fatalf("exported entry = %+v, want the logged input and output", decoded[0])
+	}
+}
+
+func TestMonitoringLogsFilters(t *testing.T) {
+	mux, _ := newMonitoringServer(t)
+
+	cases := []struct{ query, want, unwanted string }{
+		{"?provider=openai", "provider down", "Bonjour !"},
+		{"?model=gpt-4o", "provider down", "Bonjour !"},
+		{"?status=error", "provider down", "Bonjour !"},
+		{"?status=ok", "Bonjour !", "provider down"},
+		{"?provider=openai&status=ok", "Aucun appel", "Bonjour !"},
+		// Bornes de date sur un jour entier, incluses des deux cotes.
+		{"?from=2026-10-31", "provider down", "Bonjour !"},
+		{"?to=2026-10-30", "Bonjour !", "provider down"},
+		{"?from=2026-10-30&to=2026-10-30", "Bonjour !", "provider down"},
+		{"?from=2026-11-01", "Aucun appel", "Bonjour !"},
+	}
+	for _, tc := range cases {
+		recorder := httptest.NewRecorder()
+		mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/monitoring/logs"+tc.query, nil))
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("%s: status = %d, want 200", tc.query, recorder.Code)
+		}
+		body := recorder.Body.String()
+		if !strings.Contains(body, tc.want) {
+			t.Fatalf("%s: fragment is missing %q", tc.query, tc.want)
+		}
+		if strings.Contains(body, tc.unwanted) {
+			t.Fatalf("%s: fragment should not contain %q", tc.query, tc.unwanted)
+		}
+	}
+}
+
+func TestMonitoringLogsExportHonoursFilters(t *testing.T) {
+	mux, _ := newMonitoringServer(t)
+
+	// Le filtre voyage avec le lien d'export : ce que la modale montre est ce
+	// que le fichier contient.
+	recorder := httptest.NewRecorder()
+	mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/monitoring/logs?status=error", nil))
+	if body := recorder.Body.String(); !strings.Contains(body, "/monitoring/logs.csv?status=error") {
+		t.Fatalf("export link does not carry the filter: %q", body)
+	}
+
+	recorder = httptest.NewRecorder()
+	mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/monitoring/logs.csv?status=error", nil))
+	lines := strings.Split(strings.TrimSpace(recorder.Body.String()), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("csv lines = %d, want a header and the single failed call: %q", len(lines), recorder.Body.String())
+	}
+	if strings.Contains(recorder.Body.String(), "Bonjour !") {
+		t.Fatal("filtered csv still contains a successful call")
+	}
+
+	recorder = httptest.NewRecorder()
+	mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/monitoring/logs.csv?from=2026-10-30&to=2026-10-30", nil))
+	if lines := strings.Split(strings.TrimSpace(recorder.Body.String()), "\n"); len(lines) != 2 {
+		t.Fatalf("date-filtered csv lines = %d, want a header and one entry: %q", len(lines), recorder.Body.String())
+	}
+
+	recorder = httptest.NewRecorder()
+	mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/monitoring/logs.json?provider=ollama", nil))
+	var decoded []domain.CallLog
+	if err := json.Unmarshal(recorder.Body.Bytes(), &decoded); err != nil {
+		t.Fatalf("decode logs: %v", err)
+	}
+	if len(decoded) != 1 || decoded[0].Provider != "ollama" {
+		t.Fatalf("filtered json = %+v, want the single ollama call", decoded)
 	}
 }
 
