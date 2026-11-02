@@ -24,6 +24,7 @@ func parseConfigForm(r *http.Request) *domain.ChatConfig {
 		Temperature:      parseFloatOpt(r.FormValue("temperature")),
 		TopP:             parseFloatOpt(r.FormValue("top_p")),
 		MaxTokens:        parseIntOpt(r.FormValue("max_tokens")),
+		ReasoningEffort:  strings.ToLower(strings.TrimSpace(r.FormValue("reasoning_effort"))),
 		FrequencyPenalty: parseFloatOpt(r.FormValue("frequency_penalty")),
 		PresencePenalty:  parseFloatOpt(r.FormValue("presence_penalty")),
 		ResponseFormat:   strings.TrimSpace(r.FormValue("response_format")),

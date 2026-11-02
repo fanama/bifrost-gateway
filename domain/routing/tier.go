@@ -27,6 +27,7 @@ func MergeTierConfig(active, target *config.ChatConfig) *config.ChatConfig {
 	out.Temperature = active.Temperature
 	out.TopP = active.TopP
 	out.MaxTokens = active.MaxTokens
+	out.ReasoningEffort = active.ReasoningEffort
 	out.FrequencyPenalty = active.FrequencyPenalty
 	out.PresencePenalty = active.PresencePenalty
 	out.ResponseFormat = active.ResponseFormat

@@ -70,6 +70,7 @@ func (u *ConfigUseCase) Update(ctx context.Context, id string, patch *domain.Cha
 	existing.Temperature = patch.Temperature
 	existing.TopP = patch.TopP
 	existing.MaxTokens = patch.MaxTokens
+	existing.ReasoningEffort = patch.ReasoningEffort
 	existing.FrequencyPenalty = patch.FrequencyPenalty
 	existing.PresencePenalty = patch.PresencePenalty
 	existing.ResponseFormat = patch.ResponseFormat

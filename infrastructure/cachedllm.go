@@ -97,6 +97,7 @@ func (p *CachedLLMProvider) cacheKey(cfg *domain.ChatConfig, messages []domain.C
 	writeField("base_url", cfg.BaseURL)
 	writeField("temperature", fmt.Sprintf("%g", valueOrZero(cfg.Temperature)))
 	writeField("max_tokens", fmt.Sprintf("%d", valueOrZero(cfg.MaxTokens)))
+	writeField("reasoning_effort", cfg.ReasoningEffort)
 	writeField("system_prompt", cfg.SystemPrompt)
 	// Le format est indexe avec le schema, et sur sa valeur effective : deux
 	// configurations qui demandent la meme sortie structuree mais avec des

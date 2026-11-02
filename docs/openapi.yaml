@@ -396,6 +396,13 @@ components:
         max_tokens:
           type: integer
           minimum: 1
+        reasoning_effort:
+          type: string
+          enum: [none, minimal, low, medium, high]
+          description: |
+            Active, desactive (`none`) ou dose le thinking du modele. Absent,
+            la configuration active du projet tranche : son propre
+            `reasoning_effort`, sinon le defaut du provider.
         frequency_penalty:
           type: number
           minimum: -2

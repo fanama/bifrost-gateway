@@ -7,6 +7,17 @@
     <div class="chat-topbar-left" id="chat-config-selector">
       {{template "chat_config_select" .}}
     </div>
+    <div class="chat-topbar-left" id="chat-reasoning-selector">
+      <label for="chat-reasoning-select">Raisonnement :</label>
+      <select id="chat-reasoning-select" name="reasoning_effort" form="chat-form">
+        <option value="">selon la configuration</option>
+        <option value="none">désactivé</option>
+        <option value="minimal">minimal</option>
+        <option value="low">faible</option>
+        <option value="medium">moyen</option>
+        <option value="high">élevé</option>
+      </select>
+    </div>
     <div class="actions">
       <button class="btn ghost small" type="button" onclick="resetChat()">Nouvelle discussion</button>
     </div>
@@ -317,8 +328,8 @@ document.addEventListener('htmx:afterSwap', function(evt) {
 {{else}}
 {{template "chat_placeholder" .}}
 {{end}}
-{{if .ServedModel}}
-<div class="chat-served-model">Réponse produite par <strong>{{.ServedModel}}</strong>{{if ne .ServedModel .RequestedModel}} <span class="hint">(routage automatique ; configuration sélectionnée : {{.RequestedModel}})</span>{{end}}</div>
+{{if or .ServedModel .ReasoningEffort}}
+<div class="chat-served-model">{{if .ServedModel}}Réponse produite par <strong>{{.ServedModel}}</strong>{{if ne .ServedModel .RequestedModel}} <span class="hint">(routage automatique ; configuration sélectionnée : {{.RequestedModel}})</span>{{end}} &bull; {{end}}Raisonnement : <strong>{{if .ReasoningEffort}}{{reasoningLabel .ReasoningEffort}}{{else}}défaut du modèle{{end}}</strong></div>
 {{end}}
 {{end}}
 

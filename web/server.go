@@ -94,6 +94,22 @@ func templateFuncs() template.FuncMap {
 		"dur":  formatDuration,
 		"ago":  formatAgo,
 		"barh": barHeight,
+		"reasoningLabel": func(effort string) string {
+			switch effort {
+			case "none":
+				return "désactivé"
+			case "minimal":
+				return "minimal"
+			case "low":
+				return "faible"
+			case "medium":
+				return "moyen"
+			case "high":
+				return "élevé"
+			default:
+				return effort
+			}
+		},
 	}
 }
 

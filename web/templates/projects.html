@@ -149,6 +149,17 @@
             <option value="json_schema" {{if not .IsCreate}}{{if eq .EditingFormat "json_schema"}}selected{{end}}{{end}}>JSON guide par un schema</option>
           </select>
         </label>
+        <label>Raisonnement (thinking)
+          <select name="reasoning_effort">
+            <option value="" {{if .IsCreate}}selected{{else}}{{if eq .Editing.ReasoningEffort ""}}selected{{end}}{{end}}>défaut du modèle</option>
+            <option value="none" {{if not .IsCreate}}{{if eq .Editing.ReasoningEffort "none"}}selected{{end}}{{end}}>désactivé</option>
+            <option value="minimal" {{if not .IsCreate}}{{if eq .Editing.ReasoningEffort "minimal"}}selected{{end}}{{end}}>minimal</option>
+            <option value="low" {{if not .IsCreate}}{{if eq .Editing.ReasoningEffort "low"}}selected{{end}}{{end}}>faible</option>
+            <option value="medium" {{if not .IsCreate}}{{if eq .Editing.ReasoningEffort "medium"}}selected{{end}}{{end}}>moyen</option>
+            <option value="high" {{if not .IsCreate}}{{if eq .Editing.ReasoningEffort "high"}}selected{{end}}{{end}}>élevé</option>
+          </select>
+          <small>« défaut du modèle » n'envoie rien ; un niveau force le thinking et « désactivé » l'éteint.</small>
+        </label>
         </div>
 
         <div class="field schema-builder">

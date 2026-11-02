@@ -78,6 +78,28 @@ func TestChatParamsSingleFieldStillEmitted(t *testing.T) {
 	}
 }
 
+func TestChatParamsMapsReasoningEffort(t *testing.T) {
+	cfg := &domain.ChatConfig{Provider: "openai", Model: "gpt-5", ReasoningEffort: "high"}
+	params := chatParams(cfg)
+	if params == nil || params.Reasoning == nil || params.Reasoning.Effort == nil {
+		t.Fatalf("expected reasoning params, got %#v", params)
+	}
+	if *params.Reasoning.Effort != "high" {
+		t.Errorf("reasoning effort: got %q", *params.Reasoning.Effort)
+	}
+}
+
+func TestChatParamsKeepsReasoningNone(t *testing.T) {
+	cfg := &domain.ChatConfig{Provider: "openai", Model: "gpt-5", ReasoningEffort: "none"}
+	params := chatParams(cfg)
+	if params == nil || params.Reasoning == nil || params.Reasoning.Effort == nil {
+		t.Fatalf("expected reasoning params, got %#v", params)
+	}
+	if *params.Reasoning.Effort != "none" {
+		t.Errorf("reasoning effort: got %q", *params.Reasoning.Effort)
+	}
+}
+
 func TestDynamicAccountDefaultsOllamaBaseURL(t *testing.T) {
 	acc := NewDynamicAccount(&domain.ChatConfig{
 		Provider: "ollama",

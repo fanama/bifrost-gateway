@@ -133,9 +133,14 @@ func (s *chatController) chatSend(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// L'interface n'expose pas de surcharge : tout vient de la configuration
-	// selectionnee.
-	result, err := s.chat.Send(r.Context(), cfgID, history, message, nil)
+	// Le selecteur de raisonnement prime sur la configuration, sans la
+	// modifier : "selon la configuration" n'envoie aucune surcharge.
+	var opts *domain.RequestOptions
+	if effort := strings.ToLower(strings.TrimSpace(r.FormValue("reasoning_effort"))); effort != "" {
+		opts = &domain.RequestOptions{ReasoningEffort: &effort}
+	}
+
+	result, err := s.chat.Send(r.Context(), cfgID, history, message, opts)
 	if err != nil {
 		s.renderToast(w, "#chat-error", err.Error())
 		return
@@ -145,8 +150,9 @@ func (s *chatController) chatSend(w http.ResponseWriter, r *http.Request) {
 	// L'historique complet de la conversation est classe, pas seulement le
 	// dernier message.
 	s.render(w, "chat_messages", map[string]any{
-		"Messages":       result.Messages,
-		"ServedModel":    result.Model,
-		"RequestedModel": result.RequestedModel,
+		"Messages":        result.Messages,
+		"ServedModel":     result.Model,
+		"RequestedModel":  result.RequestedModel,
+		"ReasoningEffort": result.ReasoningEffort,
 	})
 }

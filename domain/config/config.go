@@ -10,18 +10,22 @@ import (
 )
 
 type ChatConfig struct {
-	ID               string   `json:"id"`
-	ProjectID        string   `json:"project_id"`
-	Name             string   `json:"name"`
-	Provider         string   `json:"provider"`
-	Model            string   `json:"model"`
-	Tier             string   `json:"tier,omitempty"`
-	BaseURL          string   `json:"base_url,omitempty"`
-	APIKey           string   `json:"api_key,omitempty"`
-	SystemPrompt     string   `json:"system_prompt,omitempty"`
-	Temperature      *float64 `json:"temperature,omitempty"`
-	TopP             *float64 `json:"top_p,omitempty"`
-	MaxTokens        *int     `json:"max_tokens,omitempty"`
+	ID           string   `json:"id"`
+	ProjectID    string   `json:"project_id"`
+	Name         string   `json:"name"`
+	Provider     string   `json:"provider"`
+	Model        string   `json:"model"`
+	Tier         string   `json:"tier,omitempty"`
+	BaseURL      string   `json:"base_url,omitempty"`
+	APIKey       string   `json:"api_key,omitempty"`
+	SystemPrompt string   `json:"system_prompt,omitempty"`
+	Temperature  *float64 `json:"temperature,omitempty"`
+	TopP         *float64 `json:"top_p,omitempty"`
+	MaxTokens    *int     `json:"max_tokens,omitempty"`
+	// ReasoningEffort regle le thinking des modeles de raisonnement : "none"
+	// le desactive, les autres niveaux le dosent. Vide laisse le comportement
+	// par defaut du provider, qui peut raisonner de lui-meme.
+	ReasoningEffort  string   `json:"reasoning_effort,omitempty"`
 	FrequencyPenalty *float64 `json:"frequency_penalty,omitempty"`
 	PresencePenalty  *float64 `json:"presence_penalty,omitempty"`
 	ResponseFormat   string   `json:"response_format,omitempty"`
@@ -78,6 +82,9 @@ func (c *ChatConfig) validateSampling() error {
 	if c.MaxTokens != nil && *c.MaxTokens < 1 {
 		return &errs.ValidationError{Fields: []string{"max_tokens"}, Reason: "doit etre superieur a 0"}
 	}
+	if !ValidReasoningEffort(c.ReasoningEffort) {
+		return &errs.ValidationError{Fields: []string{"reasoning_effort"}, Reason: "doit valoir none, minimal, low, medium, high ou etre vide"}
+	}
 	if c.FrequencyPenalty != nil && (*c.FrequencyPenalty < -2 || *c.FrequencyPenalty > 2) {
 		return &errs.ValidationError{Fields: []string{"frequency_penalty"}, Reason: "doit etre compris entre -2 et 2"}
 	}
@@ -99,6 +106,23 @@ func (c *ChatConfig) validateResponseFormat() error {
 	default:
 		return &errs.ValidationError{Fields: []string{"response_format"}, Reason: "valeur inconnue"}
 	}
+}
+
+// ReasoningEfforts liste les valeurs acceptees pour le thinking, du desactive
+// au plus profond. La valeur vide laisse le provider appliquer son defaut.
+var ReasoningEfforts = []string{"none", "minimal", "low", "medium", "high"}
+
+// ValidReasoningEffort indique si une valeur peut etre transmise au provider.
+func ValidReasoningEffort(effort string) bool {
+	if effort == "" {
+		return true
+	}
+	for _, allowed := range ReasoningEfforts {
+		if effort == allowed {
+			return true
+		}
+	}
+	return false
 }
 
 type ChatConfigRepository interface {

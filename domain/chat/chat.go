@@ -1,6 +1,8 @@
 package chat
 
 import (
+	"strings"
+
 	"bridge-gateway/domain/config"
 	"bridge-gateway/domain/errs"
 )
@@ -27,6 +29,9 @@ type ChatRequest struct {
 	// MaxCompletionTokens est le successeur de max_tokens. Il n'est lu que
 	// lorsqu'il est present, pour ne pas ecraser un max_tokens du client.
 	MaxCompletionTokens *int `json:"max_completion_tokens,omitempty"`
+	// ReasoningEffort active, desactive ("none") ou dose le thinking. Absent,
+	// la configuration active garde la main.
+	ReasoningEffort *string `json:"reasoning_effort,omitempty"`
 }
 
 // StreamOptions regle le comportement du flux SSE, comme chez OpenAI.
@@ -69,6 +74,7 @@ type RequestOptions struct {
 	PresencePenalty     *float64
 	ResponseFormat      map[string]any
 	MaxCompletionTokens *int
+	ReasoningEffort     *string
 }
 
 // OptionsFrom isole les reglages surchargeables d'une requete complete.
@@ -84,6 +90,7 @@ func OptionsFrom(req *ChatRequest) *RequestOptions {
 		PresencePenalty:     req.PresencePenalty,
 		ResponseFormat:      req.ResponseFormat,
 		MaxCompletionTokens: req.MaxCompletionTokens,
+		ReasoningEffort:     req.ReasoningEffort,
 	}
 }
 
@@ -114,6 +121,13 @@ func (o *RequestOptions) Apply(cfg *config.ChatConfig) (*config.ChatConfig, erro
 	// raisonnement refusent l'ancien, ils n'acceptent que le nouveau.
 	if o.MaxCompletionTokens != nil {
 		out.MaxTokens = o.MaxCompletionTokens
+	}
+	if o.ReasoningEffort != nil {
+		effort := strings.ToLower(strings.TrimSpace(*o.ReasoningEffort))
+		if !config.ValidReasoningEffort(effort) {
+			return nil, &errs.InvalidRequestError{Param: "reasoning_effort", Reason: "doit valoir none, minimal, low, medium, high ou etre vide"}
+		}
+		out.ReasoningEffort = effort
 	}
 	if o.FrequencyPenalty != nil {
 		out.FrequencyPenalty = o.FrequencyPenalty

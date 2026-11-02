@@ -34,6 +34,10 @@ type ChatResult struct {
 	// configuration demandee. Ils different des que le routeur substitue un tier.
 	Model          string
 	RequestedModel string
+	// ReasoningEffort est le niveau transmis au provider pour cet appel : celui
+	// de la configuration, sauf surcharge de la requete. Vide signifie que le
+	// provider a applique son defaut.
+	ReasoningEffort string
 }
 
 func (u *ChatUseCase) Send(
@@ -54,9 +58,10 @@ func (u *ChatUseCase) Send(
 	}
 
 	return ChatResult{
-		Messages:       append(messages, domain.ChatMessage{Role: "assistant", Content: reply.Content}),
-		Model:          reply.Model,
-		RequestedModel: cfg.Model,
+		Messages:        append(messages, domain.ChatMessage{Role: "assistant", Content: reply.Content}),
+		Model:           reply.Model,
+		RequestedModel:  cfg.Model,
+		ReasoningEffort: cfg.ReasoningEffort,
 	}, nil
 }
 

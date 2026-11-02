@@ -1,6 +1,8 @@
 package infrastructure
 
 import (
+	"strings"
+
 	"bridge-gateway/domain"
 	"github.com/maximhq/bifrost/core/schemas"
 )
@@ -128,12 +130,18 @@ func chatParams(cfg *domain.ChatConfig) *schemas.ChatParameters {
 		v := any(m)
 		params.ResponseFormat = &v
 	}
+	// "none" desactive explicitement le thinking d'un modele qui raisonne par
+	// defaut ; une valeur vide laisse le provider decider.
+	if effort := strings.TrimSpace(cfg.ReasoningEffort); effort != "" {
+		params.Reasoning = &schemas.ChatReasoning{Effort: &effort}
+	}
 	if params.Temperature == nil &&
 		params.TopP == nil &&
 		params.MaxCompletionTokens == nil &&
 		params.FrequencyPenalty == nil &&
 		params.PresencePenalty == nil &&
-		params.ResponseFormat == nil {
+		params.ResponseFormat == nil &&
+		params.Reasoning == nil {
 		return nil
 	}
 	return params
