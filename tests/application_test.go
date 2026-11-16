@@ -91,12 +91,18 @@ func TestConfigCRUDLifecycle(t *testing.T) {
 		Name:     "Ollama R2",
 		Provider: "Ollama",
 		Model:    "llama3",
+		FallbackModels: []domain.ModelChoice{
+			{Provider: "ollama", Model: "llama2"},
+		},
 	})
 	if err != nil {
 		t.Fatalf("update: %v", err)
 	}
 	if updated.Provider != "ollama" {
 		t.Errorf("expected provider lowercased ollama, got %s", updated.Provider)
+	}
+	if len(updated.FallbackModels) != 1 || updated.FallbackModels[0].Model != "llama2" {
+		t.Errorf("expected fallback model llama2, got %#v", updated.FallbackModels)
 	}
 	if updated.ID != created.ID {
 		t.Errorf("expected same ID, got %s", updated.ID)

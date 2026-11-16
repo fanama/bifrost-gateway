@@ -153,4 +153,24 @@ func TestProjectConfigModelsHandler(t *testing.T) {
 	if !strings.Contains(rowBody, "mistral-large") {
 		t.Fatalf("expected mistral models in fallback row, got: %s", rowBody)
 	}
+
+	// 5. POST /projects/{pid}/configs/{cid} saves fallback models
+	form := strings.NewReader("name=Cfg+Updated&provider=mistral&model=mistral-large&fallback_provider%5B%5D=ollama&fallback_model%5B%5D=qwen3%3A8b")
+	reqPost := httptest.NewRequest("POST", "/projects/"+proj.ID+"/configs/"+cfg.ID, form)
+	reqPost.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	recPost := httptest.NewRecorder()
+	mux.ServeHTTP(recPost, reqPost)
+	if recPost.Code != http.StatusOK {
+		t.Fatalf("expected 200 for update, got %d (body: %s)", recPost.Code, recPost.Body.String())
+	}
+	updatedCfg, err := configUC.Get(ctx, cfg.ID)
+	if err != nil {
+		t.Fatalf("get updated config: %v", err)
+	}
+	if len(updatedCfg.FallbackModels) != 1 {
+		t.Fatalf("expected 1 fallback model saved, got %#v", updatedCfg.FallbackModels)
+	}
+	if updatedCfg.FallbackModels[0].Provider != "ollama" || updatedCfg.FallbackModels[0].Model != "qwen3:8b" {
+		t.Errorf("unexpected fallback choice: %#v", updatedCfg.FallbackModels[0])
+	}
 }
