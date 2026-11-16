@@ -71,16 +71,18 @@ func appendCatalogModels(models []domain.ModelInfo, seen map[string]bool, catalo
 // with the configuration name.
 func appendConfigModels(models []domain.ModelInfo, seen map[string]bool, configs []domain.ChatConfig) []domain.ModelInfo {
 	for _, c := range configs {
-		key := modelKey(c.Provider, c.Model)
-		if seen[key] {
-			continue
+		for _, choice := range c.Candidates() {
+			key := modelKey(choice.Provider, choice.Model)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			models = append(models, domain.ModelInfo{
+				Name:     choice.Model,
+				Provider: choice.Provider,
+				Source:   c.Name,
+			})
 		}
-		seen[key] = true
-		models = append(models, domain.ModelInfo{
-			Name:     c.Model,
-			Provider: c.Provider,
-			Source:   c.Name,
-		})
 	}
 	return models
 }

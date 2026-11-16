@@ -95,13 +95,18 @@ func (s *ragController) askQuestion(w http.ResponseWriter, r *http.Request) {
 	question := strings.TrimSpace(r.FormValue("question"))
 	opts := application.RAGQueryOptions{TopK: formInt(r.FormValue("top_k"))}
 	if r.FormValue("mode") == "search" {
-		chunks, err := s.rag.Search(r.Context(), pid, question, opts)
+		result, err := s.rag.Search(r.Context(), pid, question, opts)
 		if err != nil {
 			s.renderToast(w, "#rag-test-error", err.Error())
 			return
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		s.render(w, "rag_search", map[string]any{"Question": question, "Chunks": chunks})
+		s.render(w, "rag_search", map[string]any{
+			"Question": question,
+			"Chunks":   result.Chunks,
+			"Degraded": result.Degraded,
+			"State":    result.IndexState,
+		})
 		return
 	}
 	answer, err := s.rag.Query(r.Context(), pid, question, opts)

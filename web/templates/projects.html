@@ -83,12 +83,31 @@
 {{end}}
 
 {{define "config_model_select"}}
-<select id="cfg-model" name="model" required>
+<select {{if .SelectID}}id="{{.SelectID}}" {{end}}name="{{.ModelField}}"{{if .Required}} required{{end}}>
   <option value="" disabled {{if not .SelectedModel}}selected{{end}}>— choisir —</option>
   {{range .Models}}
   <option value="{{.}}" {{if eq $.SelectedModel .}}selected{{end}}>{{.}}</option>
   {{end}}
 </select>
+{{end}}
+
+{{define "config_fallback_row"}}
+<div class="fallback-row">
+  <select name="fallback_provider[]" required
+          hx-get="/projects/{{.ProjectID}}/configs/models?field=fallback_model%5B%5D&amp;select_id=&amp;required=0"
+          hx-trigger="change"
+          hx-target="next .fallback-model-cell"
+          hx-swap="innerHTML">
+    <option value="" disabled {{if not .SelectedProvider}}selected{{end}}>— provider —</option>
+    {{range .Providers}}
+    <option value="{{.Name}}" {{if eq $.SelectedProvider .Name}}selected{{end}}>{{.Name}}</option>
+    {{end}}
+  </select>
+  <span class="fallback-model-cell">
+    {{template "config_model_select" .}}
+  </span>
+  <button type="button" class="btn small danger" onclick="this.closest('.fallback-row').remove()" title="Retirer ce repli">&times;</button>
+</div>
 {{end}}
 
 {{define "config_form"}}
@@ -124,6 +143,18 @@
       <label>API Key
         <input name="api_key" id="cfg-api-key" type="password" placeholder="laisser vide pour cle provider ou Ollama" value="{{if not .IsCreate}}{{.Editing.APIKey}}{{end}}">
       </label>
+    </div>
+
+    <div class="fallback-chain">
+      <label>Modeles de secours
+        <span class="hint">Essayes dans l'ordre si le modele principal echoue. Chaque repli peut viser un autre provider.</span>
+      </label>
+      <div id="cfg-fallback-rows">
+        {{range .Fallbacks}}{{template "config_fallback_row" .}}{{end}}
+      </div>
+      <button class="btn small ghost" type="button"
+              hx-get="/projects/{{.ProjectID}}/configs/fallback-row"
+              hx-target="#cfg-fallback-rows" hx-swap="beforeend">+ Ajouter un repli</button>
     </div>
 
     <details class="gen-params" {{if not .IsCreate}}open{{end}}>
@@ -316,7 +347,7 @@
       <tr class="{{if .Active}}active{{end}}">
         <td>{{.Name}}</td>
         <td>{{.Provider}}</td>
-        <td>{{.Model}}</td>
+        <td>{{.Model}}{{if .FallbackModels}}<div class="muted" style="font-size:.75rem">{{range $i, $m := .FallbackModels}}{{if $i}} &rarr; {{end}}{{$m.Label}}{{end}}</div>{{end}}</td>
         <td class="muted">{{.BaseURL}}</td>
         <td>{{if .Active}}<span class="badge ok">Actif</span>{{else}}<span class="badge">Inactif</span>{{end}}</td>
         <td class="actions">

@@ -55,12 +55,23 @@ func (s *stubRAG) DeleteDocument(context.Context, string, string) error { return
 func (s *stubRAG) Query(context.Context, string, string, application.RAGQueryOptions) (*domain.Answer, error) {
 	return &domain.Answer{Answer: "Orion [1]", HasContext: true, Model: "test"}, nil
 }
-func (s *stubRAG) Search(_ context.Context, _ string, _ string, opts application.RAGQueryOptions) ([]domain.RetrievedChunk, error) {
+func (s *stubRAG) Search(_ context.Context, _ string, _ string, opts application.RAGQueryOptions) (*domain.RAGSearchResult, error) {
 	s.queries = append(s.queries, opts)
-	return []domain.RetrievedChunk{{
-		Chunk: domain.Chunk{FileName: "notes.txt", Ordinal: 0, Text: "Passage alpha"},
-		Score: 0.9,
-	}}, nil
+	return &domain.RAGSearchResult{
+		Chunks: []domain.RetrievedChunk{{
+			Chunk: domain.Chunk{FileName: "notes.txt", Ordinal: 0, Text: "Passage alpha"},
+			Score: 0.9,
+		}},
+		IndexState: domain.RAGIndexReady,
+	}, nil
+}
+
+func (s *stubRAG) IndexStatus(context.Context, string) (domain.RAGIndexStatus, error) {
+	return domain.RAGIndexStatus{ProjectID: "p1", State: domain.RAGIndexReady, Nodes: 4}, nil
+}
+
+func (s *stubRAG) RebuildIndex(context.Context, string) (domain.RAGIndexStatus, error) {
+	return domain.RAGIndexStatus{ProjectID: "p1", State: domain.RAGIndexBuilding}, nil
 }
 
 func newRAGWebServer(t *testing.T, rag *stubRAG) *http.ServeMux {
@@ -87,6 +98,9 @@ func TestRAGSettingsPageRendersAndSaves(t *testing.T) {
 	form := url.Values{
 		"project_id": {"p1"}, "embedding_model": {domain.ModelLocalEmbedding},
 		"top_k": {"3"}, "chunk_size": {"800"}, "chunk_overlap": {"100"},
+		"hnsw_m": {"16"}, "hnsw_ef_construction": {"200"}, "hnsw_ef_search": {"64"},
+		"hnsw_tombstone_rebuild_ratio": {"0.2"}, "hnsw_memory_limit_mb": {"64"},
+		"hnsw_recall_sample_rate": {"0"},
 	}
 	req := httptest.NewRequest(http.MethodPost, "/rag/settings", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -94,6 +108,9 @@ func TestRAGSettingsPageRendersAndSaves(t *testing.T) {
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK || rag.saved == nil || rag.saved.TopK != 3 {
 		t.Fatalf("settings save: code=%d saved=%#v body=%s", rec.Code, rag.saved, rec.Body.String())
+	}
+	if rag.saved.HNSWM != 16 {
+		t.Fatalf("hnsw_m not parsed: %#v", rag.saved)
 	}
 }
 

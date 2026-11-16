@@ -81,29 +81,151 @@ func (c *BifrostClient) Embedding(
 }
 
 func formatBifrostError(bifrostErr *schemas.BifrostError) error {
-	msg := "unknown error"
-	if bifrostErr.Error != nil && bifrostErr.Error.Message != "" {
-		msg = bifrostErr.Error.Message
-	}
+	msg, fromRaw, generic := bifrostMessage(bifrostErr)
+	detail := bifrostDetail(bifrostErr, msg, fromRaw)
 
-	var code string
-	if bifrostErr.Error != nil && bifrostErr.Error.Code != nil {
-		code = strings.TrimSpace(*bifrostErr.Error.Code)
+	out := &ProviderError{
+		Message:    msg,
+		Detail:     excerpt(detail, 200),
+		Code:       bifrostCode(bifrostErr),
+		StatusCode: bifrostStatus(bifrostErr),
 	}
-
-	var detail string
-	if bifrostErr.Error != nil && bifrostErr.Error.Error != nil {
-		detail = strings.TrimSpace(bifrostErr.Error.Error.Error())
-	}
-	if detail == "" {
-		detail = rawResponseExcerpt(bifrostErr.ExtraFields.RawResponse)
-	}
-
-	out := &ProviderError{Message: msg, Detail: excerpt(detail, 200), Code: code}
-	if bifrostErr.StatusCode != nil {
-		out.StatusCode = *bifrostErr.StatusCode
+	if generic && out.Detail == "" {
+		out.Hint = errorHint(out.StatusCode)
 	}
 	return out
+}
+
+func bifrostStatus(e *schemas.BifrostError) int {
+	if e.StatusCode == nil {
+		return 0
+	}
+	return *e.StatusCode
+}
+
+func bifrostCode(e *schemas.BifrostError) string {
+	if e.Error == nil || e.Error.Code == nil {
+		return ""
+	}
+	return strings.TrimSpace(*e.Error.Code)
+}
+
+// bifrostMessage returns the provider message when it is readable. Bifrost
+// reports an empty or generic "unknown error" when it cannot parse the body,
+// so the raw response is inspected before falling back to a status-based
+// message. fromRaw reports that the message came from the body (so the body
+// must not be repeated as detail), generic reports that no readable message
+// was found and the text is a status-based fallback.
+func bifrostMessage(e *schemas.BifrostError) (msg string, fromRaw, generic bool) {
+	if e.Error != nil {
+		msg = strings.TrimSpace(e.Error.Message)
+	}
+	if !genericProviderMessage(msg) {
+		return msg, false, false
+	}
+	if extracted := rawResponseMessage(e.ExtraFields.RawResponse); extracted != "" {
+		return extracted, true, false
+	}
+	return genericStatusMessage(bifrostStatus(e)), false, true
+}
+
+func bifrostDetail(e *schemas.BifrostError, msg string, fromRaw bool) string {
+	if e.Error != nil && e.Error.Error != nil {
+		if detail := strings.TrimSpace(e.Error.Error.Error()); detail != "" {
+			return detail
+		}
+	}
+	if fromRaw {
+		return ""
+	}
+	detail := strings.TrimSpace(rawResponseExcerpt(e.ExtraFields.RawResponse))
+	if strings.EqualFold(detail, msg) {
+		return ""
+	}
+	return detail
+}
+
+func genericProviderMessage(msg string) bool {
+	switch strings.ToLower(strings.TrimSpace(msg)) {
+	case "", "error", "unknown", "unknown error":
+		return true
+	default:
+		return false
+	}
+}
+
+func genericStatusMessage(status int) string {
+	switch {
+	case status == 400:
+		return "the provider rejected the request"
+	case status == 401 || status == 403:
+		return "the provider refused authentication"
+	case status == 404:
+		return "the provider could not find the model or endpoint"
+	case status == 429:
+		return "the provider rate limit was reached"
+	case status >= 500:
+		return "the provider is unavailable"
+	default:
+		return "the provider returned an error without details"
+	}
+}
+
+func errorHint(status int) string {
+	switch {
+	case status == 400:
+		return "check the model name and the parameters sent (response_format, max_tokens, reasoning_effort)"
+	case status == 401 || status == 403:
+		return "check the API key and its permissions"
+	case status == 404:
+		return "check the model name and the base URL"
+	case status == 429:
+		return "wait before retrying or raise the provider quota"
+	case status >= 500:
+		return "retry later or use another provider"
+	default:
+		return ""
+	}
+}
+
+// rawResponseMessage extracts a human message from the usual provider error
+// shapes: Mistral's flat {"message":...}, OpenAI's nested {"error":{...}},
+// and plain strings.
+func rawResponseMessage(raw any) string {
+	body := rawResponseExcerpt(raw)
+	if body == "" {
+		return ""
+	}
+	var payload any
+	if err := json.Unmarshal([]byte(body), &payload); err != nil {
+		return ""
+	}
+	return messageFromPayload(payload)
+}
+
+func messageFromPayload(v any) string {
+	switch typed := v.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	case []any:
+		for _, item := range typed {
+			if msg := messageFromPayload(item); msg != "" {
+				return msg
+			}
+		}
+	case map[string]any:
+		for _, key := range []string{"message", "detail", "error_description", "reason"} {
+			if msg, ok := typed[key].(string); ok && strings.TrimSpace(msg) != "" {
+				return strings.TrimSpace(msg)
+			}
+		}
+		if nested, ok := typed["error"]; ok {
+			if msg := messageFromPayload(nested); msg != "" {
+				return msg
+			}
+		}
+	}
+	return ""
 }
 
 func rawResponseExcerpt(raw any) string {

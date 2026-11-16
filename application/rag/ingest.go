@@ -44,9 +44,11 @@ func (s *Service) Ingest(
 	if err := doc.Validate(); err != nil {
 		return nil, err
 	}
-	if err := s.persist(ctx, doc, buildChunks(s, doc, passages, vectors)); err != nil {
+	chunks := buildChunks(s, doc, passages, vectors)
+	if err := s.persist(ctx, doc, chunks); err != nil {
 		return nil, err
 	}
+	s.indexChunks(ctx, doc.ProjectID, doc.EmbeddingModel, chunks, settings)
 	return doc, nil
 }
 
@@ -130,5 +132,9 @@ func (s *Service) DeleteDocument(ctx context.Context, projectID, documentID stri
 	if err := s.chunks.DeleteByDocument(ctx, projectID, documentID); err != nil {
 		return err
 	}
-	return s.docs.Delete(ctx, documentID)
+	if err := s.docs.Delete(ctx, documentID); err != nil {
+		return err
+	}
+	s.removeIndexedDocument(ctx, projectID, documentID)
+	return nil
 }

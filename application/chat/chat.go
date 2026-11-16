@@ -61,7 +61,7 @@ func (u *ChatUseCase) Send(
 		Messages:        append(messages, domain.ChatMessage{Role: "assistant", Content: reply.Content}),
 		Model:           reply.Model,
 		RequestedModel:  cfg.Model,
-		ReasoningEffort: cfg.ReasoningEffort,
+		ReasoningEffort: cfg.EffectiveReasoningEffort(),
 	}, nil
 }
 

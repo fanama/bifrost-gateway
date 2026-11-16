@@ -141,6 +141,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /projects/{pid}", s.projects.pageProjectDetail)
 	mux.HandleFunc("POST /projects/{pid}/configs", s.projects.createProjectConfig)
 	mux.HandleFunc("GET /projects/{pid}/configs/models", s.projects.projectConfigModels)
+	mux.HandleFunc("GET /projects/{pid}/configs/fallback-row", s.projects.newFallbackRow)
 	mux.HandleFunc("GET /projects/{pid}/configs/{cid}/edit", s.projects.editProjectConfigForm)
 	mux.HandleFunc("POST /projects/{pid}/configs/{cid}", s.projects.updateProjectConfig)
 	mux.HandleFunc("POST /projects/{pid}/configs/{cid}/activate", s.projects.activateProjectConfig)
@@ -213,26 +214,17 @@ func (s *uiShared) baseForm(ctx context.Context, pid string, editing *domain.Cha
 		IsCreate:    editing == nil,
 		UseDefaults: editing == nil,
 		Providers:   providers,
+		SelectID:    "cfg-model",
+		ModelField:  "model",
+		Required:    true,
 	}
 	if editing != nil {
 		data.Action += "/" + editing.ID
 		data.SelectedProvider = editing.Provider
 		data.SelectedModel = editing.Model
+		data.Fallbacks = s.fallbackRows(ctx, pid, editing.FallbackModels)
 	}
-	hints := s.modelHints(ctx, data.SelectedProvider)
-	if editing != nil && editing.Model != "" {
-		found := false
-		for _, h := range hints {
-			if h == editing.Model {
-				found = true
-				break
-			}
-		}
-		if !found {
-			hints = append([]string{editing.Model}, hints...)
-		}
-	}
-	data.Models = hints
+	data.Models = hintWithModel(s.modelHints(ctx, data.SelectedProvider), data.SelectedModel)
 	data.SchemaFieldTypes = domain.SchemaFieldTypes()
 	data.SchemaFields = schemaRowsFromStored(editingSchema(editing))
 	data.ResponseSchema = ""

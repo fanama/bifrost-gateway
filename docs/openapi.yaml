@@ -29,7 +29,10 @@ tags:
   - name: models
     description: Decouverte des modeles
   - name: rag
-    description: Ingestion, recherche et reponses ancrees par projet
+    description: |
+      Ingestion, recherche et reponses ancrees par projet. Toutes les routes
+      exigent une cle API de projet : le projet est deduit du token, jamais
+      d'un parametre ou d'un en-tete fourni par le client.
   - name: health
     description: Sondes de sante (sans authentification)
 security:
@@ -125,8 +128,8 @@ paths:
         PDF (couche texte convertie en Markdown : titres, listes, paragraphes)
         ou une image (PNG, JPEG, WebP, GIF, BMP, TIFF). Une image est transcrite par le modele de vision de la
         configuration active du projet ; sans configuration active, l'upload
-        echoue. Les formats bureautiques (Office) sont refuses. Le document et
-        ses passages sont ecrits avant la reponse 201.
+        echoue. Les formats bureautiques (Office) sont refuses.        Le document, ses
+        passages et l'index HNSW du projet sont mis a jour avant la reponse 201.
       operationId: uploadRAGDocument
       requestBody:
         required: true
@@ -228,6 +231,34 @@ paths:
                 $ref: '#/components/schemas/RAGSearchResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/rag/index/status:
+    get:
+      tags: [rag]
+      summary: Etat de l'index HNSW du projet
+      operationId: getRAGIndexStatus
+      responses:
+        '200':
+          description: Etat de l'index
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RAGIndexStatus'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/rag/index/rebuild:
+    post:
+      tags: [rag]
+      summary: Lance une reconstruction de l'index en arriere-plan
+      operationId: rebuildRAGIndex
+      responses:
+        '202':
+          description: Reconstruction planifiee ; interroger /v1/rag/index/status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RAGIndexStatus'
         '401':
           $ref: '#/components/responses/Unauthorized'
   /v1/models:
@@ -615,7 +646,7 @@ components:
           format: double
     RAGAnswer:
       type: object
-      required: [answer, sources, has_context]
+      required: [answer, sources, has_context, degraded]
       properties:
         answer:
           type: string
@@ -628,6 +659,12 @@ components:
         model:
           type: string
           description: Modele qui a reellement produit la reponse.
+        degraded:
+          type: boolean
+          description: Vrai lorsque la recherche a utilise le scan exact au lieu de l'index.
+        index_state:
+          type: string
+          enum: [disabled, cold, building, ready, degraded, over_capacity]
     RAGSearchHit:
       type: object
       required: [document_id, file_name, chunk_index, text, score]
@@ -645,7 +682,7 @@ components:
           format: double
     RAGSearchResponse:
       type: object
-      required: [chunks, total]
+      required: [chunks, total, degraded]
       properties:
         chunks:
           type: array
@@ -653,6 +690,59 @@ components:
             $ref: '#/components/schemas/RAGSearchHit'
         total:
           type: integer
+        degraded:
+          type: boolean
+          description: Vrai lorsque la recherche a utilise le scan exact au lieu de l'index.
+        index_state:
+          type: string
+          enum: [disabled, cold, building, ready, degraded, over_capacity]
+    RAGIndexParams:
+      type: object
+      properties:
+        m:
+          type: integer
+        ef_construction:
+          type: integer
+        ef_search:
+          type: integer
+    RAGIndexStatus:
+      type: object
+      required: [project_id, state, degraded, nodes, tombstones, tombstone_ratio, memory_bytes, memory_limit_bytes, build_duration_ms, params]
+      properties:
+        project_id:
+          type: string
+        state:
+          type: string
+          enum: [disabled, cold, building, ready, degraded, over_capacity]
+        degraded:
+          type: boolean
+        embedding_model:
+          type: string
+        dimensions:
+          type: integer
+        nodes:
+          type: integer
+        tombstones:
+          type: integer
+        tombstone_ratio:
+          type: number
+          format: double
+        memory_bytes:
+          type: integer
+          format: int64
+        memory_limit_bytes:
+          type: integer
+          format: int64
+        build_duration_ms:
+          type: integer
+          format: int64
+        last_built_at:
+          type: string
+          format: date-time
+        last_error:
+          type: string
+        params:
+          $ref: '#/components/schemas/RAGIndexParams'
     Error:
       type: object
       required: [error]

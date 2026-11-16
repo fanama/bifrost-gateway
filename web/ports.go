@@ -79,7 +79,9 @@ type ragService interface {
 	Documents(ctx context.Context, projectID string) ([]domain.Document, error)
 	DeleteDocument(ctx context.Context, projectID, documentID string) error
 	Query(ctx context.Context, projectID, question string, opts application.RAGQueryOptions) (*domain.Answer, error)
-	Search(ctx context.Context, projectID, question string, opts application.RAGQueryOptions) ([]domain.RetrievedChunk, error)
+	Search(ctx context.Context, projectID, question string, opts application.RAGQueryOptions) (*domain.RAGSearchResult, error)
+	IndexStatus(ctx context.Context, projectID string) (domain.RAGIndexStatus, error)
+	RebuildIndex(ctx context.Context, projectID string) (domain.RAGIndexStatus, error)
 }
 
 // metricsService rend un instantane des compteurs de supervision et le journal

@@ -15,6 +15,7 @@ import (
 	"bridge-gateway/domain"
 	"bridge-gateway/handlers"
 	"bridge-gateway/infrastructure"
+	"bridge-gateway/infrastructure/ragindex"
 )
 
 type ragStubEmbedder struct{}
@@ -43,6 +44,13 @@ func (ragStubLLM) Chat(context.Context, *domain.ChatConfig, []domain.ChatMessage
 
 func newRAGMux(t *testing.T) (*http.ServeMux, string) {
 	t.Helper()
+	mux, secret, _ := newRAGMuxWithMaster(t)
+	return mux, secret
+}
+
+func newRAGMuxWithMaster(t *testing.T) (*http.ServeMux, string, string) {
+	t.Helper()
+	const masterKey = "master-test-key"
 	ctx := context.Background()
 	db := newTestDB(t)
 
@@ -67,20 +75,23 @@ func newRAGMux(t *testing.T) (*http.ServeMux, string) {
 		t.Fatalf("activate config: %v", err)
 	}
 
+	chunkStore := infrastructure.NewRAGChunkStore(db)
+	indexManager := ragindex.NewManager(chunkStore)
+	t.Cleanup(indexManager.Wait)
 	service := application.NewRAGUseCase(
 		infrastructure.NewRAGDocumentStore(db),
-		infrastructure.NewRAGChunkStore(db),
+		chunkStore,
 		infrastructure.NewRAGTextExtractor(0),
 		ragStubEmbedder{},
 		configs,
 		infrastructure.NewRAGSettingsStore(db),
 		ragStubLLM{},
-	)
-	handler := handlers.NewRAGHandler(application.NewAuthUseCase("", keys, projects), service)
+	).WithIndex(indexManager)
+	handler := handlers.NewRAGHandler(application.NewAuthUseCase(masterKey, keys, projects), service)
 
 	mux := http.NewServeMux()
 	handlers.RegisterRAGRoutes(mux, handler)
-	return mux, secret
+	return mux, secret, masterKey
 }
 
 func ragUpload(t *testing.T, mux *http.ServeMux, secret, name, content string) *httptest.ResponseRecorder {
@@ -155,6 +166,69 @@ func TestRAGUploadRejectsUnsupportedType(t *testing.T) {
 	rec := ragUpload(t, mux, secret, "report.docx", "PK\x03\x04binary")
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestRAGIndexStatusRebuildAndSearchFlag(t *testing.T) {
+	mux, secret := newRAGMux(t)
+	if rec := ragUpload(t, mux, secret, "notes.txt", "The alpha project is called Orion."); rec.Code != http.StatusCreated {
+		t.Fatalf("upload: %d %s", rec.Code, rec.Body.String())
+	}
+
+	statusRec := ragJSON(t, mux, http.MethodGet, "/v1/rag/index/status", secret, nil)
+	if statusRec.Code != http.StatusOK {
+		t.Fatalf("status: %d %s", statusRec.Code, statusRec.Body.String())
+	}
+	var status domain.RAGIndexStatus
+	if err := json.Unmarshal(statusRec.Body.Bytes(), &status); err != nil {
+		t.Fatalf("decode status: %v", err)
+	}
+	if status.State != domain.RAGIndexReady || status.Nodes < 1 {
+		t.Fatalf("unexpected index status: %#v", status)
+	}
+
+	rebuild := ragJSON(t, mux, http.MethodPost, "/v1/rag/index/rebuild", secret, nil)
+	if rebuild.Code != http.StatusAccepted {
+		t.Fatalf("rebuild: %d %s", rebuild.Code, rebuild.Body.String())
+	}
+
+	search := ragJSON(t, mux, http.MethodPost, "/v1/rag/search", secret, map[string]any{"question": "alpha?"})
+	if search.Code != http.StatusOK {
+		t.Fatalf("search: %d %s", search.Code, search.Body.String())
+	}
+	var payload struct {
+		Total      int    `json:"total"`
+		Degraded   bool   `json:"degraded"`
+		IndexState string `json:"index_state"`
+	}
+	if err := json.Unmarshal(search.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode search: %v", err)
+	}
+	if payload.Total == 0 || payload.Degraded || payload.IndexState != string(domain.RAGIndexReady) {
+		t.Fatalf("unexpected search metadata: %#v", payload)
+	}
+}
+
+// RAG is project-token only: the master key cannot pick a project, and a
+// project token always acts on its own project regardless of client hints.
+func TestRAGQueryRejectsMasterKeyAndBindsProjectToToken(t *testing.T) {
+	mux, secret, master := newRAGMuxWithMaster(t)
+
+	masterRec := ragJSON(t, mux, http.MethodPost, "/v1/rag/query?project_id=other", master, map[string]any{
+		"question": "alpha?",
+	})
+	if masterRec.Code != http.StatusUnauthorized {
+		t.Fatalf("master key must not call RAG: %d %s", masterRec.Code, masterRec.Body.String())
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/rag/query?project_id=other", strings.NewReader(`{"question":"alpha?"}`))
+	req.Header.Set("Authorization", "Bearer "+secret)
+	req.Header.Set("X-Project-ID", "other")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("project token must act on its own project: %d %s", rec.Code, rec.Body.String())
 	}
 }
 

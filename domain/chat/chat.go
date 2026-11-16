@@ -108,6 +108,22 @@ func (o *RequestOptions) Apply(cfg *config.ChatConfig) (*config.ChatConfig, erro
 		return &out, nil
 	}
 
+	if err := o.applySampling(&out); err != nil {
+		return nil, err
+	}
+	if o.ResponseFormat != nil {
+		format, schema, err := config.ParseResponseFormat(o.ResponseFormat)
+		if err != nil {
+			return nil, &errs.InvalidRequestError{Param: "response_format", Reason: err.Error()}
+		}
+		out.ResponseFormat = format
+		out.ResponseSchema = schema
+	}
+
+	return &out, nil
+}
+
+func (o *RequestOptions) applySampling(out *config.ChatConfig) error {
 	if o.Temperature != nil {
 		out.Temperature = o.Temperature
 	}
@@ -122,27 +138,28 @@ func (o *RequestOptions) Apply(cfg *config.ChatConfig) (*config.ChatConfig, erro
 	if o.MaxCompletionTokens != nil {
 		out.MaxTokens = o.MaxCompletionTokens
 	}
-	if o.ReasoningEffort != nil {
-		effort := strings.ToLower(strings.TrimSpace(*o.ReasoningEffort))
-		if !config.ValidReasoningEffort(effort) {
-			return nil, &errs.InvalidRequestError{Param: "reasoning_effort", Reason: "doit valoir none, minimal, low, medium, high ou etre vide"}
-		}
-		out.ReasoningEffort = effort
-	}
 	if o.FrequencyPenalty != nil {
 		out.FrequencyPenalty = o.FrequencyPenalty
 	}
 	if o.PresencePenalty != nil {
 		out.PresencePenalty = o.PresencePenalty
 	}
-	if o.ResponseFormat != nil {
-		format, schema, err := config.ParseResponseFormat(o.ResponseFormat)
-		if err != nil {
-			return nil, &errs.InvalidRequestError{Param: "response_format", Reason: err.Error()}
-		}
-		out.ResponseFormat = format
-		out.ResponseSchema = schema
-	}
+	return o.applyReasoning(out)
+}
 
-	return &out, nil
+func (o *RequestOptions) applyReasoning(out *config.ChatConfig) error {
+	if o.ReasoningEffort == nil {
+		return nil
+	}
+	effort := strings.ToLower(strings.TrimSpace(*o.ReasoningEffort))
+	if !config.ValidReasoningEffort(effort) {
+		return &errs.InvalidRequestError{Param: "reasoning_effort", Reason: "doit valoir none, minimal, low, medium, high ou etre vide"}
+	}
+	// Desactiver le thinking reste toujours accepte : sur un provider qui ne
+	// raisonne pas, c'est simplement sans effet. Activer un niveau, non.
+	if effort != "" && effort != "none" && !config.ProviderSupportsReasoning(out.Provider) {
+		return &errs.InvalidRequestError{Param: "reasoning_effort", Reason: "non pris en charge par le provider " + out.Provider}
+	}
+	out.ReasoningEffort = effort
+	return nil
 }

@@ -107,6 +107,43 @@ func (s *projectsController) projectDetailData(ctx context.Context, pid string, 
 	}
 }
 
+// fallbackRows prepare les lignes du selecteur de repli d'une configuration.
+func (s *uiShared) fallbackRows(ctx context.Context, pid string, fallbacks []domain.ModelChoice) []fallbackRowData {
+	rows := make([]fallbackRowData, 0, len(fallbacks))
+	for _, fallback := range fallbacks {
+		rows = append(rows, s.fallbackRow(ctx, pid, fallback))
+	}
+	return rows
+}
+
+// fallbackRow rend les choix d'une ligne : providers enregistres, modeles du
+// provider selectionne, et le modele enregistre meme s'il a quitte le
+// catalogue.
+func (s *uiShared) fallbackRow(ctx context.Context, pid string, choice domain.ModelChoice) fallbackRowData {
+	return fallbackRowData{
+		ProjectID:        pid,
+		Providers:        s.providerList(ctx),
+		SelectedProvider: choice.Provider,
+		SelectedModel:    choice.Model,
+		Models:           hintWithModel(s.modelHints(ctx, choice.Provider), choice.Model),
+		ModelField:       "fallback_model[]",
+	}
+}
+
+// hintWithModel ajoute le modele enregistre en tete des propositions s'il n'y
+// figure pas, pour qu'une edition ne perde pas une valeur hors catalogue.
+func hintWithModel(hints []string, model string) []string {
+	if model == "" {
+		return hints
+	}
+	for _, hint := range hints {
+		if hint == model {
+			return hints
+		}
+	}
+	return append([]string{model}, hints...)
+}
+
 func (s *projectsController) renderProjectConfigsSection(w http.ResponseWriter, r *http.Request, pid string) {
 	project, err := s.projects.Get(r.Context(), pid)
 	if err != nil {

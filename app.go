@@ -12,6 +12,7 @@ import (
 	"bridge-gateway/domain"
 	"bridge-gateway/handlers"
 	"bridge-gateway/infrastructure"
+	"bridge-gateway/infrastructure/ragindex"
 )
 
 // gatewayStores holds the raw persistence adapters plus the repositories the
@@ -20,6 +21,7 @@ type gatewayStores struct {
 	configs   *infrastructure.ChatConfigStore
 	projects  *infrastructure.ProjectStore
 	keys      *infrastructure.APIKeyStore
+	ragChunks *infrastructure.RAGChunkStore
 	providers *infrastructure.ProviderStore
 	catalog   *infrastructure.ModelCatalogStore
 
@@ -56,6 +58,7 @@ type gatewayApp struct {
 	bifrost  *infrastructure.BifrostLLMProvider
 	llm      domain.LLMProvider
 	embedder domain.EmbeddingProvider
+	ragIndex *ragindex.Manager
 	chat     *handlers.ChatHandler
 	models   *handlers.ModelsHandler
 	embed    *handlers.EmbeddingHandler
@@ -141,6 +144,7 @@ func (a *gatewayApp) buildStores() error {
 		configs:    configs,
 		projects:   projects,
 		keys:       keys,
+		ragChunks:  infrastructure.NewRAGChunkStore(a.db),
 		uiConfigs:  configs,
 		uiProjects: projects,
 		uiKeys:     keys,
@@ -233,14 +237,15 @@ func (a *gatewayApp) buildEmbeddingService() {
 func (a *gatewayApp) buildRAGService() {
 	extractor := infrastructure.NewRAGTextExtractor(0).
 		WithImages(infrastructure.NewRAGImageOCR(a.stores.configs, a.bifrost))
+	a.ragIndex = ragindex.NewManager(a.stores.ragChunks)
 	a.useCases.rag = application.NewRAGUseCase(
 		infrastructure.NewRAGDocumentStore(a.db),
-		infrastructure.NewRAGChunkStore(a.db),
+		a.stores.ragChunks,
 		extractor,
 		a.embedder,
 		a.stores.configs,
 		infrastructure.NewRAGSettingsStore(a.db),
 		a.llm,
-	)
+	).WithIndex(a.ragIndex)
 	a.rag = handlers.NewRAGHandler(a.useCases.auth, a.useCases.rag)
 }

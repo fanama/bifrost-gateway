@@ -41,6 +41,7 @@ type (
 type (
 	ChatConfig           = config.ChatConfig
 	ChatConfigRepository = config.ChatConfigRepository
+	ModelChoice          = config.ModelChoice
 	SchemaField          = config.SchemaField
 )
 
@@ -110,6 +111,20 @@ type (
 	TextExtractor         = domainrag.TextExtractor
 	RAGSettings           = domainrag.Settings
 	RAGSettingsRepository = domainrag.SettingsRepository
+	RAGIndexStatus        = domainrag.IndexStatus
+	RAGIndexState         = domainrag.IndexState
+	RAGSearchResult       = domainrag.SearchResult
+	RAGChunkIndex         = domainrag.ChunkIndex
+	RAGIndexOptions       = domainrag.IndexOptions
+)
+
+const (
+	RAGIndexDisabled     = domainrag.IndexDisabled
+	RAGIndexCold         = domainrag.IndexCold
+	RAGIndexBuilding     = domainrag.IndexBuilding
+	RAGIndexReady        = domainrag.IndexReady
+	RAGIndexDegraded     = domainrag.IndexDegraded
+	RAGIndexOverCapacity = domainrag.IndexOverCapacity
 )
 
 const (
@@ -153,7 +168,10 @@ func StreamViaFallback(r LLMResult, err error) (<-chan StreamEvent, error) {
 func StreamFrom(ctx context.Context, p LLMProvider, cfg *ChatConfig, m []ChatMessage) (<-chan StreamEvent, error) {
 	return llm.StreamFrom(ctx, p, cfg, m)
 }
-func TierRankOf(tier string) int                         { return config.TierRankOf(tier) }
+func TierRankOf(tier string) int { return config.TierRankOf(tier) }
+func ModelCandidates(provider, model string, fallbacks []ModelChoice) []ModelChoice {
+	return config.ModelCandidates(provider, model, fallbacks)
+}
 func TierOptions() []string                              { return config.TierOptions() }
 func ParseJSONSchema(raw string) (map[string]any, error) { return config.ParseJSONSchema(raw) }
 func ParseResponseFormat(m map[string]any) (string, string, error) {

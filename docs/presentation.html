@@ -1,0 +1,819 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bridge Gateway — Technical Brief</title>
+<style>
+  /* Tokens: one accent, one warm, one ink, on paper. Change these first. */
+  :root {
+    --ink: #12171f;
+    --ink-soft: #33404f;
+    --muted: #667485;
+    --line: #d9d6cf;
+    --paper: #f6f4ef;
+    --card: #ffffff;
+    --accent: #0f6b64;
+    --accent-soft: #e3f1ee;
+    --warm: #b45309;
+    --warm-soft: #fbf0e2;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, "Helvetica Neue", Arial, sans-serif;
+    --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, "Times New Roman", serif;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%; background: var(--paper); color: var(--ink);
+    font-family: var(--sans); -webkit-font-smoothing: antialiased;
+  }
+
+  .viewport { position: fixed; inset: 0; display: grid; place-items: center; overflow: hidden; }
+  .stage { width: 1280px; height: 720px; position: relative; transform-origin: center center; }
+
+  /* -- slide shell ------------------------------------------------------ */
+  .slide {
+    position: absolute; inset: 0; display: none; flex-direction: column;
+    padding: 52px 68px 54px; background: var(--card);
+    border: 1px solid var(--line); border-radius: 6px;
+    box-shadow: 0 24px 60px -30px rgba(18, 23, 31, .45), 0 2px 6px rgba(18, 23, 31, .05);
+    overflow: hidden;
+  }
+  .slide.active { display: flex; animation: rise .32s ease both; }
+  @keyframes rise {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .eyebrow {
+    display: flex; align-items: center; gap: 10px; font-size: 12.5px; font-weight: 600;
+    letter-spacing: .16em; text-transform: uppercase; color: var(--muted);
+  }
+  .eyebrow::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+
+  h1 {
+    font-family: var(--serif); font-weight: 600; font-size: 62px; line-height: 1.04;
+    letter-spacing: -.02em; margin: 26px 0 0; max-width: 17ch;
+  }
+  h2 {
+    font-family: var(--serif); font-weight: 600; font-size: 40px; line-height: 1.12;
+    letter-spacing: -.015em; margin: 14px 0 0; max-width: 30ch;
+  }
+  h3 { font-size: 16px; margin: 0 0 6px; }
+  p { margin: 0; }
+  .lede { font-size: 20px; line-height: 1.5; color: var(--ink-soft); margin-top: 18px; max-width: 62ch; }
+  .note { font-size: 14px; line-height: 1.5; color: var(--muted); }
+  .mono { font-family: var(--mono); font-size: 12.5px; }
+  .muted { color: var(--muted); }
+
+  .body { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 24px; min-height: 0; }
+  .footer {
+    display: flex; align-items: center; justify-content: space-between; gap: 24px;
+    margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line);
+    font-size: 12px; color: var(--muted); letter-spacing: .04em;
+  }
+
+  /* -- builders --------------------------------------------------------- */
+  .cols { display: grid; gap: 18px; }
+  .cols.two { grid-template-columns: 1fr 1fr; }
+  .cols.three { grid-template-columns: repeat(3, 1fr); }
+  .cols.four { grid-template-columns: repeat(4, 1fr); }
+
+  .card { background: #fbfaf7; border: 1px solid var(--line); border-radius: 4px; padding: 20px 22px; }
+  .card p { font-size: 14.5px; line-height: 1.55; color: var(--ink-soft); }
+  .card h3 { color: var(--ink); }
+
+  .num {
+    display: block; margin-bottom: 10px; font-family: var(--serif); font-size: 15px;
+    font-weight: 600; letter-spacing: .04em; color: var(--accent);
+  }
+  .stat { font-family: var(--serif); font-size: 44px; line-height: 1; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+  .stat small {
+    display: block; margin-top: 8px; font-family: var(--sans); font-size: 13px;
+    line-height: 1.4; letter-spacing: 0; color: var(--muted);
+  }
+
+  ul.clean { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
+  ul.clean li { position: relative; padding-left: 24px; font-size: 15.5px; line-height: 1.5; color: var(--ink-soft); }
+  ul.clean li::before {
+    content: ""; position: absolute; left: 2px; top: .58em;
+    width: 8px; height: 8px; border-radius: 50%; background: var(--accent); opacity: .75;
+  }
+  ul.clean strong { color: var(--ink); }
+
+  .rule {
+    display: grid; grid-template-columns: 34px 1fr; gap: 14px; align-items: start;
+    padding: 13px 16px; border-left: 2px solid var(--accent); background: #fbfaf7;
+  }
+  .rule .k { font-family: var(--serif); font-size: 17px; font-weight: 600; color: var(--accent); }
+  .rule p { font-size: 14.5px; line-height: 1.5; color: var(--ink-soft); }
+  .rule strong { color: var(--ink); }
+
+  .pills { display: flex; flex-wrap: wrap; gap: 8px; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px;
+    background: var(--accent-soft); border: 1px solid #cfe5e0; color: #0b4f4a;
+    font-size: 12.5px; font-weight: 600; letter-spacing: .02em;
+  }
+
+  /* -- inline SVG schemas ----------------------------------------------- */
+  .diagram { display: block; width: 100%; height: auto; }
+  .dg-box { fill: #fbfaf7; stroke: var(--line); stroke-width: 1; }
+  .dg-core { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.5; }
+  .dg-fail { fill: #fbfaf7; stroke: var(--warm); stroke-width: 1.3; }
+  .dg-annot { fill: none; stroke: #c9c4ba; stroke-width: 1; stroke-dasharray: 4 4; }
+  .dg-h { font-family: var(--sans); font-size: 13.5px; font-weight: 700; fill: var(--ink); }
+  .dg-sub { font-family: var(--sans); font-size: 12px; fill: var(--ink-soft); }
+  .dg-mono { font-family: var(--mono); font-size: 11.5px; fill: var(--muted); }
+  .dg-label { font-family: var(--sans); font-size: 11.5px; fill: var(--muted); }
+  .dg-edge { fill: none; stroke: var(--accent); stroke-width: 1.4; }
+  .dg-edge-fail { fill: none; stroke: var(--warm); stroke-width: 1.3; }
+  .dg-edge-return { fill: none; stroke: var(--warm); stroke-width: 1.3; stroke-dasharray: 5 4; }
+
+  /* -- flow: one row of boxes, arrows drawn as text ---------------------- */
+  .lanes { display: grid; gap: 14px; }
+  .lane {
+    display: grid; grid-template-columns: 150px 1fr; align-items: center; gap: 16px;
+    padding: 14px 16px; border: 1px solid var(--line); border-radius: 4px; background: #fbfaf7;
+  }
+  .lane-label { font-size: 12.5px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--accent); }
+  .row { display: flex; align-items: stretch; }
+  .node {
+    flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center;
+    padding: 9px 12px; border: 1px solid #cfd6d3; border-radius: 3px; background: #fff;
+    font-size: 12.8px; line-height: 1.35;
+  }
+  .node strong { display: block; font-size: 13px; }
+  .node span { font-size: 11.5px; color: var(--muted); }
+  .arrow { align-self: center; flex: 0 0 auto; padding: 0 7px; font-size: 15px; color: #9aa8a5; }
+
+  /* -- title slide: dark, editorial ------------------------------------- */
+  .slide.title {
+    padding: 64px 72px 56px; color: #f3f7f6; border-color: #0d2a2e;
+    background: linear-gradient(122deg, #10302f 0%, #123c3a 46%, #0d2a34 100%);
+  }
+  .slide.title .eyebrow { color: #9fc4bd; }
+  .slide.title .eyebrow::after { background: rgba(255, 255, 255, .16); }
+  .slide.title h1 { color: #fff; max-width: 17ch; }
+  .slide.title .lede { color: #c6dcd7; }
+  .slide.title .footer { border-top-color: rgba(255, 255, 255, .16); color: #9fc4bd; }
+  .title-grid { display: grid; grid-template-columns: 1.25fr .75fr; gap: 40px; align-items: end; }
+  .kv { display: grid; gap: 14px; align-content: end; margin: 0; }
+  .kv div { border-top: 1px solid rgba(255, 255, 255, .18); padding-top: 10px; }
+  .kv dt { margin: 0 0 4px; font-size: 11.5px; letter-spacing: .14em; text-transform: uppercase; color: #8fb6ae; }
+  .kv dd { margin: 0; font-size: 15px; color: #eaf3f1; }
+
+  /* -- technical slide: dark is a signal -------------------------------- */
+  .slide.dark { background: #0f1b21; border-color: #16262e; color: #eef4f3; }
+  .slide.dark .eyebrow { color: #8fb6ae; }
+  .slide.dark .eyebrow::after { background: rgba(255, 255, 255, .16); }
+  .slide.dark h2 { color: #fff; }
+  .slide.dark .note { color: #a9c2be; }
+  .slide.dark .footer { border-top-color: rgba(255, 255, 255, .16); color: #8fb6ae; }
+  .slide.dark .card { background: rgba(255, 255, 255, .045); border-color: rgba(255, 255, 255, .14); }
+  .slide.dark .card p, .slide.dark ul.clean li { color: #b9cdc9; }
+  .slide.dark ul.clean strong { color: #fff; }
+  .slide.dark .mono { color: #9fd6cb; }
+
+  /* -- chrome ----------------------------------------------------------- */
+  .progress { position: fixed; left: 0; top: 0; z-index: 10; width: 0; height: 2px; background: var(--accent); transition: width .25s ease; }
+  .chrome {
+    position: fixed; right: 18px; bottom: 14px; z-index: 10; display: flex; align-items: center;
+    gap: 10px; font-size: 12px; font-variant-numeric: tabular-nums; color: var(--muted);
+  }
+  .chrome button {
+    width: 30px; height: 30px; border: 1px solid var(--line); border-radius: 4px;
+    background: #fff; color: var(--ink-soft); font-size: 14px; line-height: 1; cursor: pointer;
+  }
+  .chrome button:hover { border-color: #b9c4c1; color: var(--ink); }
+  .counter { min-width: 48px; text-align: center; }
+  .hint { position: fixed; left: 18px; bottom: 18px; z-index: 10; font-size: 11.5px; letter-spacing: .04em; color: #98a3a0; }
+
+  /* -- print: one slide per page ---------------------------------------- */
+  @page { size: 1280px 720px; margin: 0; }
+  @media print {
+    html, body { height: auto; background: #fff; }
+    .viewport { position: static; display: block; overflow: visible; }
+    .stage { width: 1280px; height: auto; transform: none !important; }
+    .slide {
+      display: flex !important; position: relative; width: 1280px; height: 720px;
+      page-break-after: always; break-after: page;
+      border: none; border-radius: 0; box-shadow: none; animation: none;
+    }
+    .chrome, .hint, .progress { display: none !important; }
+  }
+</style>
+</head>
+<body>
+
+<div class="progress" id="progress"></div>
+
+<div class="viewport">
+  <div class="stage" id="stage">
+
+    <!-- 1 · title ------------------------------------------------------->
+    <section class="slide title active">
+      <div class="eyebrow">Bridge Gateway · technical brief · November 2026</div>
+      <div class="title-grid" style="flex:1; align-items:center;">
+        <div>
+          <h1 style="max-width:22ch;">One OpenAI surface.<br>Vectors never leave<br>the process.</h1>
+          <p class="lede">A Go gateway that embeds BifrostAI, keeps SQLite as its only store, and answers
+            from project-scoped documents through a pure-Go HNSW index with an exact-scan backstop.</p>
+          <div class="pills" style="margin-top:26px;">
+            <span class="pill">Go 1.26</span>
+            <span class="pill">BifrostAI v1.4.4</span>
+            <span class="pill">CGO disabled</span>
+            <span class="pill">no vector service</span>
+          </div>
+        </div>
+        <dl class="kv">
+          <div><dt>Code</dt><dd>162 production files · 18,034 lines</dd></div>
+          <div><dt>Tests</dt><dd>48 files · 300 test functions</dd></div>
+          <div><dt>Backends</dt><dd>10 named providers + any OpenAI-compatible</dd></div>
+          <div><dt>Store</dt><dd>One SQLite file</dd></div>
+        </dl>
+      </div>
+      <div class="footer"><span>Bridge Gateway · technical brief</span><span>1 / 18</span></div>
+    </section>
+
+    <!-- 2 · problem ------------------------------------------------------>
+    <section class="slide">
+      <div class="eyebrow">The problem</div>
+      <div class="body">
+        <h2>Three integration taxes, paid by every team that ships an LLM feature.</h2>
+        <div class="cols three">
+          <div class="card">
+            <span class="num">01</span>
+            <h3>Provider sprawl</h3>
+            <p>Ten named backends, ten auth schemes, ten error shapes. Each one re-implements streaming,
+              retries and usage accounting behind its own SDK.</p>
+          </div>
+          <div class="card">
+            <span class="num">02</span>
+            <h3>Answers without evidence</h3>
+            <p>The model can only cite what reached its context. A folder of PDFs on disk is not a
+              citation, and a plausible answer is not a source.</p>
+          </div>
+          <div class="card">
+            <span class="num">03</span>
+            <h3>Retrieval means a new service</h3>
+            <p>Vector search usually arrives as another store: another credential, another backup,
+              another failure domain to page someone about.</p>
+          </div>
+        </div>
+        <p class="note">The hard constraint here is not adding providers — it is doing retrieval without adding a service.</p>
+      </div>
+      <div class="footer"><span>Bridge Gateway · technical brief</span><span>2 / 18</span></div>
+    </section>
+
+    <!-- 3 · the answer --------------------------------------------------->
+    <section class="slide">
+      <div class="eyebrow">The answer</div>
+      <div class="body">
+        <div class="cols two" style="gap:42px; align-items:center;">
+          <div>
+            <h2 style="margin-top:0;">One process, one key format, one retrieval contract.</h2>
+            <ul class="clean" style="margin-top:20px;">
+              <li><strong>OpenAI-compatible</strong> <span class="mono">/v1/chat/completions</span>, <span class="mono">/v1/embeddings</span>, <span class="mono">/v1/models</span>: existing clients change a base URL.</li>
+              <li><strong>Bifrost embedded as a library</strong> — no proxy hop, no extra socket in the path.</li>
+              <li><strong>RAG on the same key</strong> under <span class="mono">/v1/rag/*</span>, scoped to the key's project.</li>
+              <li><strong>Retrieval states its own method</strong>: HNSW or exact scan, with <span class="mono">degraded</span> and <span class="mono">index_state</span> on every response.</li>
+            </ul>
+          </div>
+          <div class="card" style="padding:26px;">
+            <div class="stat">0 <small>external services required to run. SQLite file, in-process cache, in-process ONNX runtime.</small></div>
+          </div>
+        </div>
+      </div>
+      <div class="footer"><span>Bridge Gateway · technical brief</span><span>3 / 18</span></div>
+    </section>
+
+    <!-- 4 · user journey ------------------------------------------------->
+    <section class="slide">
+      <div class="eyebrow">The path a user takes</div>
+      <div class="body">
+        <h2>Four steps from an empty install to a cited answer.</h2>
+        <div class="cols four">
+          <div class="card">
+            <span class="num">01</span>
+            <h3>Create a project</h3>
+            <p>Add a provider and an active configuration. Model, prompt, tier and response format live there.</p>
+          </div>
+          <div class="card">
+            <span class="num">02</span>
+            <h3>Issue a key</h3>
+            <p>The secret is shown once. Only its SHA-256 digest is stored, and it only ever sees its own project.</p>
+          </div>
+          <div class="card">
+            <span class="num">03</span>
+            <h3>Upload documents</h3>
+            <p>Text, Markdown, HTML, CSV, JSON, YAML, XML, PDF, images. PDFs are parsed into Markdown; images are transcribed.</p>
+          </div>
+          <div class="card">
+            <span class="num">04</span>
+            <h3>Ask</h3>
+            <p>Post a question to <span class="mono">/v1/rag/query</span> or use the test bench; get an answer with source passages.</p>
+          </div>
+        </div>
+        <p class="note">Uploads are synchronous: when the request returns, the passages are stored, embedded and indexed.</p>
+      </div>
+      <div class="footer"><span>Bridge Gateway · technical brief</span><span>4 / 18</span></div>
+    </section>
+
+    <!-- 5 · guardrails --------------------------------------------------->
+    <section class="slide">
+      <div class="eyebrow">Guardrails</div>
+      <div class="body">
+        <h2>Every rule here exists because of a specific way this goes wrong.</h2>
+        <div style="display:grid; gap:10px;">
+          <div class="rule"><span class="k">01</span><div><p><strong>The project comes from the API key.</strong> The master key is rejected on <span class="mono">/v1/rag/*</span>, so a key cannot retrieve another tenant's corpus.</p></div></div>
+          <div class="rule"><span class="k">02</span><div><p><strong>Vectors must share a space.</strong> A chunk is only ranked when its embedding model and width match the query vector — otherwise unrelated spaces get compared.</p></div></div>
+          <div class="rule"><span class="k">03</span><div><p><strong>An index failure is never a 5xx.</strong> Cold, building, mismatched, over capacity or errored all fall back to the exact scan and say so with <span class="mono">degraded: true</span>.</p></div></div>
+          <div class="rule"><span class="k">04</span><div><p><strong>Deletes are visible before the response.</strong> Tombstones hide a document's passages at query time, so a deleted file cannot resurface.</p></div></div>
+        </div>
+      </div>
+      <div class="footer"><span>Bridge Gateway · technical brief</span><span>5 / 18</span></div>
+    </section>
+
+    <!-- 6 · layers ------------------------------------------------------>
+    <section class="slide">
+      <div class="eyebrow">Architecture</div>
+      <div class="body">
+        <h2>Dependencies point inward, and the compiler can prove it.</h2>
+        <svg class="diagram" viewBox="0 0 1144 316" role="img" aria-labelledby="arch-title arch-desc">
+          <title id="arch-title">Layered dependencies of Bridge Gateway</title>
+          <desc id="arch-desc">Delivery, made of handlers and web, imports the application layer. The application layer imports the domain. Infrastructure implements the domain ports, so it also points at the domain. No arrow points outward.</desc>
+          <defs>
+            <marker id="arch-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="#0f6b64" />
+            </marker>
+          </defs>
+
+          <rect class="dg-box" x="16" y="8" width="356" height="104" rx="5" />
+          <text class="dg-h" x="34" y="40">handlers/ · web/</text>
+          <text class="dg-sub" x="34" y="66">OpenAI-compatible HTTP · HTMX console</text>
+          <text class="dg-sub" x="34" y="88">consumer-side ports: Chat, RAG, Monitoring</text>
+
+          <rect class="dg-box" x="440" y="8" width="330" height="104" rx="5" />
+          <text class="dg-h" x="458" y="40">application/</text>
+          <text class="dg-sub" x="458" y="66">chat · rag · auth · tenancy · catalog</text>
+          <text class="dg-sub" x="458" y="88">use cases; depend on ports only</text>
+
+          <rect class="dg-core" x="836" y="8" width="292" height="300" rx="5" />
+          <text class="dg-h" x="854" y="40">domain/</text>
+          <text class="dg-sub" x="854" y="66">entities and rules, no I/O</text>
+          <text class="dg-mono" x="854" y="100">Chunk · Document · Settings</text>
+          <text class="dg-mono" x="854" y="122">IndexStatus · SearchResult</text>
+          <text class="dg-mono" x="854" y="144">CosineSimilarity · RankChunks</text>
+          <text class="dg-mono" x="854" y="166">errs taxonomy · tier policy</text>
+
+          <rect class="dg-box" x="16" y="176" width="754" height="132" rx="5" />
+          <text class="dg-h" x="34" y="208">infrastructure/</text>
+          <text class="dg-sub" x="34" y="234">SQLite stores · Bifrost adapter · ONNX runtime</text>
+          <text class="dg-sub" x="34" y="256">HNSW index · in-process caches · metrics</text>
+          <text class="dg-sub" x="34" y="278">PDF → Markdown · image OCR · legacy import</text>
+
+          <path class="dg-edge" d="M 376 60 H 432" marker-end="url(#arch-arrow)" />
+          <text class="dg-label" x="404" y="48" text-anchor="middle">imports</text>
+          <path class="dg-edge" d="M 774 60 H 828" marker-end="url(#arch-arrow)" />
+          <text class="dg-label" x="802" y="48" text-anchor="middle">imports</text>
+          <path class="dg-edge" d="M 774 242 H 828" marker-end="url(#arch-arrow)" />
+          <text class="dg-label" x="802" y="230" text-anchor="middle">implements</text>
+        </svg>
+        <p class="note">Composition root: <span class="mono">app.go</span>, <span class="mono">app_server.go</span> and <span class="mono">wiring.go</span> are the only place that construct adapters — swapping a cache, router or index is a wiring change.</p>
+      </div>
+      <div class="footer"><span>Bridge Gateway · technical brief</span><span>6 / 18</span></div>
+    </section>
+
+    <!-- 7 · call path --------------------------------------------------->
+    <section class="slide">
+      <div class="eyebrow">Ports and adapters at runtime</div>
+      <div class="body">
+        <h2>Two call paths, one rule: the use case names an interface.</h2>
+        <div class="lanes">
+          <div class="lane">
+            <div class="lane-label">Grounded answer</div>
+            <div class="row">
+              <div class="node"><strong>handlers/rag</strong><span>key → project</span></div>
+              <div class="arrow">→</div>
+              <div class="node"><strong>application/rag</strong><span>Query, Search</span></div>
+              <div class="arrow">→</div>
+              <div class="node"><strong>ChunkIndex port</strong><span>interface, no I/O</span></div>
+              <div class="arrow">→</div>
+              <div class="node"><strong>ragindex.Manager</strong><span>HNSW or exact</span></div>
+            </div>
+          </div>
+          <div class="lane">
+            <div class="lane-label">Chat completion</div>
+            <div class="row">
+              <div class="node"><strong>handlers/chat</strong><span>OpenAI shape</span></div>
+              <div class="arrow">→</div>
+              <div class="node"><strong>application/chat</strong><span>enrichment</span></div>
+              <div class="arrow">→</div>
+              <div class="node"><strong>LLMProvider port</strong><span>Chat, ChatStream</span></div>
+              <div class="arrow">→</div>
+              <div class="node"><strong>Bifrost SDK</strong><span>provider call</span></div>
+            </div>
+          </div>
+        </div>
+        <p class="note">Streaming is its own capability port, so a provider that cannot stream is not forced to pretend. Contract tests exercise every adapter against the same port.</p>
+      </div>
+      <div class="footer"><span>Bridge Gateway · technical brief</span><span>7 / 18</span></div>
+    </section>
+
+    <!-- 8 · ingestion --------------------------------------------------->
+    <section class="slide">
+      <div class="eyebrow">Ingestion</div>
+      <div class="body">
+        <h2>Format handling is where retrieval quality is actually won.</h2>
+        <div class="cols three">
+          <div class="card">
+            <span class="num">PDF</span>
+            <h3>Page → Markdown</h3>
+            <p>Headings from font size, list items from bullets and indentation, paragraphs re-glued across
+              line breaks, hyphenated words reattached. Pure Go — no Poppler, no Java.</p>
+          </div>
+          <div class="card">
+            <span class="num">Images</span>
+            <h3>Pixels → text</h3>
+            <p>Transcribed by the active configuration's vision model, in reading order, with a short factual
+              description when the image carries no text.</p>
+          </div>
+          <div class="card">
+            <span class="num">Chunks</span>
+            <h3>Boundary-aware</h3>
+            <p>Chunking targets the configured size but snaps to the nearest paragraph or line, so Markdown
+              structure survives into the passage.</p>
+          </div>
+        </div>
+        <p class="note">Limits are explicit: 25 MiB per upload; Office files rejected; a scanned PDF with no text layer is rejected rather than indexed as noise.</p>
+      </div>
+      <div class="footer"><span>Bridge Gateway · technical brief</span><span>8 / 18</span></div>
+    </section>
+
+    <!-- 9 · HNSW technical --------------------------------------------->
+    <section class="slide dark">
+      <div class="eyebrow">Under the hood · technical</div>
+      <div class="body">
+        <h2>The index is a derived cache that is allowed to fail.</h2>
+        <div class="cols two" style="gap:40px; align-items:start;">
+          <ul class="clean">
+            <li><strong>One graph per project</strong>, pure Go, no CGO — the dependency constraint was hard.</li>
+            <li><strong>Vectors are L2-normalized on insert</strong>, so inner product is cosine; returned scores are recomputed exactly.</li>
+            <li><strong>M=16, efConstruction=200, efSearch=64</strong> — provisional defaults, per the spec's decision log.</li>
+            <li><strong>Writes are visible immediately</strong>: upsert happens before the upload returns; the next search sees it.</li>
+            <li><strong>Deletes tombstone</strong> nodes, filtered at query time; a rebuild is scheduled at 20% tombstones.</li>
+          </ul>
+          <div class="card" style="padding:22px;">
+            <p class="mono" style="margin:0; line-height:2;">graph.go · insert.go · search.go<br>manager.go · build.go</p>
+            <p class="note" style="margin-top:14px;">Fallback contract: cold · building · model or width mismatch ·
+              over capacity · build error → exact cosine scan, <span class="mono">degraded: true</span>, never a 5xx.</p>
+            <p class="note" style="margin-top:10px;">Memory is estimated per node: vector bytes + text + 128 B metadata + 4 B per link; the default cap is 64 MB per project.</p>
+          </div>
+        </div>
+      </div>
+      <div class="footer"><span>Bridge Gateway · technical part</span><span>9 / 18</span></div>
+    </section>
+
+    <!-- 10 · lifecycle -------------------------------------------------->
+    <section class="slide">
+      <div class="eyebrow">Index lifecycle</div>
+      <div class="body">
+        <h2>What the caller sees, in each state.</h2>
+        <svg class="diagram" viewBox="0 0 1144 310" role="img" aria-labelledby="life-title life-desc">
+          <title id="life-title">RAG index states and the fallback to exact search</title>
+          <desc id="life-desc">Cold becomes building on the first query or upload. Building becomes ready when the graph fits the memory cap, moves to degraded on a build error, and moves to over_capacity when the estimate exceeds the cap. A settings change or a tombstone ratio above 20 percent returns ready to building. An operator rebuild or a raised cap returns either failure state to building. Every non-ready state answers from the exact cosine scan. A dashed sidebar lists the status and rebuild endpoints available to operators.</desc>
+          <defs>
+            <marker id="life-accent" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="#0f6b64" />
+            </marker>
+            <marker id="life-warm" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="#b45309" />
+            </marker>
+          </defs>
+
+          <rect class="dg-box" x="16" y="52" width="180" height="80" rx="5" />
+          <text class="dg-h" x="34" y="80">cold</text>
+          <text class="dg-sub" x="34" y="102">exact scan now</text>
+          <text class="dg-sub" x="34" y="120">rebuild starts</text>
+
+          <rect class="dg-box" x="300" y="52" width="230" height="80" rx="5" />
+          <text class="dg-h" x="318" y="80">building</text>
+          <text class="dg-sub" x="318" y="102">exact scan + rebuild</text>
+          <text class="dg-sub" x="318" y="120">degraded: true</text>
+
+          <rect class="dg-core" x="650" y="52" width="230" height="80" rx="5" />
+          <text class="dg-h" x="668" y="80">ready</text>
+          <text class="dg-sub" x="668" y="102">graph answers</text>
+          <text class="dg-sub" x="668" y="120">degraded: false</text>
+
+          <rect class="dg-fail" x="300" y="196" width="230" height="80" rx="5" />
+          <text class="dg-h" x="318" y="224">degraded</text>
+          <text class="dg-sub" x="318" y="246">exact scan</text>
+          <text class="dg-sub" x="318" y="264">last_error set</text>
+
+          <rect class="dg-fail" x="650" y="196" width="230" height="80" rx="5" />
+          <text class="dg-h" x="668" y="224">over_capacity</text>
+          <text class="dg-sub" x="668" y="246">graph dropped</text>
+          <text class="dg-sub" x="668" y="264">exact scan</text>
+
+          <rect class="dg-annot" x="910" y="88" width="218" height="140" rx="5" />
+          <text class="dg-label" x="926" y="112" style="letter-spacing:.12em;text-transform:uppercase;font-weight:600;">operator view</text>
+          <text class="dg-mono" x="926" y="140">GET /v1/rag/index/status</text>
+          <text class="dg-mono" x="926" y="162">state · nodes · tombstones</text>
+          <text class="dg-mono" x="926" y="184">memory_bytes · last_error</text>
+          <text class="dg-mono" x="926" y="206">POST …/index/rebuild</text>
+
+          <path class="dg-edge" d="M 196 92 H 292" marker-end="url(#life-accent)" />
+          <text class="dg-label" x="244" y="80" text-anchor="middle">first query</text>
+
+          <path class="dg-edge" d="M 530 92 H 642" marker-end="url(#life-accent)" />
+          <text class="dg-label" x="586" y="80" text-anchor="middle">fits cap</text>
+
+          <path class="dg-edge" d="M 765 52 V 22 H 415 V 44" marker-end="url(#life-accent)" />
+          <text class="dg-label" x="590" y="14" text-anchor="middle">settings change · 20% tombstones</text>
+
+          <path class="dg-edge-fail" d="M 415 132 V 188" marker-end="url(#life-warm)" />
+          <text class="dg-label" x="425" y="166">build error</text>
+
+          <path class="dg-edge-fail" d="M 516 132 L 690 190" marker-end="url(#life-warm)" />
+          <text class="dg-label" x="590" y="180" text-anchor="middle">over cap</text>
+
+          <path class="dg-edge-return" d="M 765 276 V 300 H 250 V 116 H 292" marker-end="url(#life-warm)" />
+          <path class="dg-edge-return" d="M 345 276 V 300" />
+          <text class="dg-label" x="510" y="292" text-anchor="middle">operator rebuild or raised cap</text>
+        </svg>
+        <p class="note">Every state advertises itself on the response, and every non-ready state answers from the exact cosine scan. A query whose embedding model or width differs from the graph scans exactly for that request and starts a rebuild. Arithmetic, not a benchmark: 10,000 chunks × 384 dimensions × 4 bytes = 15.4 MB of vectors, before links and metadata.</p>
+      </div>
+      <div class="footer"><span>Bridge Gateway · technical brief</span><span>10 / 18</span></div>
+    </section>
+
+    <!-- 11 · data handling ---------------------------------------------->
+    <section class="slide">
+      <div class="eyebrow">Data handling</div>
+      <div class="body">
+        <h2>One file to back up, and one thing deliberately not in it.</h2>
+        <div class="cols two" style="gap:32px;">
+          <ul class="clean">
+            <li><strong>Eight tables</strong> — projects, configurations, API keys, providers, catalog models, RAG settings, documents, chunks.</li>
+            <li><strong>Uniform rows</strong>: <span class="mono">(id TEXT PRIMARY KEY, payload TEXT)</span> with JSON payloads and JSON indexes on filtered fields.</li>
+            <li><strong>Keys are digests</strong>: only SHA-256 is stored; the plaintext secret exists once, at creation.</li>
+          </ul>
+          <ul class="clean">
+            <li><strong>The graph is never persisted.</strong> It is rebuilt from stored vectors, so a schema change cannot corrupt it.</li>
+            <li><strong>Two bounded caches</strong>: repository reads 15 s / 2,048 entries; LLM responses 5 min / 512 entries.</li>
+            <li><strong>Legacy JSON import</strong> is idempotent: existing IDs win, imported files are renamed <span class="mono">.imported</span>.</li>
+          </ul>
+        </div>
+      </div>
+      <div class="footer"><span>Bridge Gateway · technical brief</span><span>11 / 18</span></div>
+    </section>
+
+    <!-- 12 · tenancy ---------------------------------------------------->
+    <section class="slide">
+      <div class="eyebrow">Isolation</div>
+      <div class="body">
+        <h2>The project is the tenant boundary for everything.</h2>
+        <div class="cols three">
+          <div class="card">
+            <span class="num">Scope</span>
+            <h3>Config, keys, corpus</h3>
+            <p>Every configuration belongs to a project. One active configuration per project; keys authenticate
+              <span class="mono">/v1/*</span> against it.</p>
+          </div>
+          <div class="card">
+            <span class="num">Index</span>
+            <h3>One graph, one cap</h3>
+            <p>Each project gets its own graph and its own memory budget, so one large corpus cannot evict
+              another project's index.</p>
+          </div>
+          <div class="card">
+            <span class="num">Rules</span>
+            <h3>Validated in the domain</h3>
+            <p><span class="mono">top_k</span> 1–20, <span class="mono">M</span> 16–64, <span class="mono">efConstruction</span> 40–2000, tombstone ratio 0.05–0.50,
+              memory 8–1024 MB.</p>
+          </div>
+        </div>
+        <p class="note">Settings live as one JSON payload per project; missing fields normalize to defaults, so the index parameters needed no SQL migration.</p>
+      </div>
+      <div class="footer"><span>Bridge Gateway · technical brief</span><span>12 / 18</span></div>
+    </section>
+
+    <!-- 13 · console ---------------------------------------------------->
+    <section class="slide">
+      <div class="eyebrow">Operating surface</div>
+      <div class="body">
+        <h2>Server-rendered fragments, no JavaScript bundle.</h2>
+        <div class="cols three">
+          <div class="card">
+            <span class="num">Tests bench</span>
+            <h3>/rag/test</h3>
+            <p>Upload, list and delete documents, then answer or search-only — the same code path as the API,
+              project-scoped.</p>
+          </div>
+          <div class="card">
+            <span class="num">Settings</span>
+            <h3>/rag/settings</h3>
+            <p>Embedding model, top_k, chunking, prompt and the full HNSW section with a status card and rebuild action.</p>
+          </div>
+          <div class="card">
+            <span class="num">Monitoring</span>
+            <h3>/monitoring</h3>
+            <p>Traffic, p50/p95/p99, route counts, recent errors, runtime stats, plus the last 100 LLM calls with JSON and CSV export.</p>
+          </div>
+        </div>
+        <p class="note">UI copy is French; code, comments and API messages are English. Log entries are truncated at 4,000 characters and kept in memory only.</p>
+      </div>
+      <div class="footer"><span>Bridge Gateway · technical brief</span><span>13 / 18</span></div>
+    </section>
+
+    <!-- 14 · models and routing ----------------------------------------->
+    <section class="slide">
+      <div class="eyebrow">Models and routing</div>
+      <div class="body">
+        <h2>Local by default, cloud by configuration.</h2>
+        <div class="cols two" style="gap:34px; align-items:start;">
+          <ul class="clean">
+            <li><strong>Embeddings route by name prefix</strong>: <span class="mono">onnx/…</span> to the local ONNX runtime, <span class="mono">local/…</span> to a deterministic embedder, anything else to Bifrost.</li>
+            <li><strong>Defaults run offline</strong>: all-MiniLM-L6-v2 for embeddings, SmolLM2 135M for local chat.</li>
+            <li><strong>Tier ladder</strong> <span class="mono">fast &lt; balanced &lt; frontier</span>, chosen by a local classifier at a 0.6 confidence floor; a failing tier cools down for 60 s.</li>
+          </ul>
+          <div class="card" style="padding:24px;">
+            <div class="stat">~25 s <small>cost of using gemma4:e4b as the routing classifier on this setup — documented in config.yaml. A small model takes a fraction of a second.</small></div>
+            <p class="note" style="margin-top:16px;">Routing is disabled by default: the classifier runs on every uncached request, so its latency is on the critical path.</p>
+          </div>
+        </div>
+      </div>
+      <div class="footer"><span>Bridge Gateway · technical brief</span><span>14 / 18</span></div>
+    </section>
+
+    <!-- 15 · operations -------------------------------------------------->
+    <section class="slide">
+      <div class="eyebrow">Operational story</div>
+      <div class="body">
+        <h2>The container builds a binary it can actually run.</h2>
+        <div class="cols two" style="gap:34px; align-items:start;">
+          <ul class="clean">
+            <li><strong>Two stages, both glibc</strong>: a bookworm builder cross-compiles with <span class="mono">CGO_ENABLED=0</span>; the runtime is <span class="mono">debian:bookworm-slim</span> plus CA certificates.</li>
+            <li><strong>Why not scratch or Alpine</strong>: purego loads the ONNX runtime through <span class="mono">libdl</span> and <span class="mono">libc</span>, so the binary is dynamically linked; an Alpine builder recorded a musl loader and the container died with <span class="mono">exec: no such file or directory</span>.</li>
+            <li><strong>Build-time guard</strong>: the runtime stage executes the binary with <span class="mono">--help</span>, so an architecture or interpreter mismatch fails the build, not the deploy.</li>
+          </ul>
+          <div class="card" style="padding:24px;">
+            <p class="mono" style="margin:0; line-height:1.9;">one compose service<br>SQLite on a volume<br>config.yaml read-only<br>ONNX artefacts on first start<br><span style="color:var(--warm);">BIFROST_MASTER_KEY</span> before exposure</p>
+            <p class="note" style="margin-top:14px;">Graceful shutdown waits for background index rebuilds before closing the database.</p>
+          </div>
+        </div>
+      </div>
+      <div class="footer"><span>Bridge Gateway · technical brief</span><span>15 / 18</span></div>
+    </section>
+
+    <!-- 16 · limits ------------------------------------------------------>
+    <section class="slide">
+      <div class="eyebrow">Limits</div>
+      <div class="body">
+        <h2>What this is not, stated as plainly as the features.</h2>
+        <div class="cols two" style="gap:38px;">
+          <ul class="clean">
+            <li><strong>Single process.</strong> Two instances on one SQLite file each build their own graph — correct, wasteful, and explicitly unsupported.</li>
+            <li><strong>In-memory only.</strong> After a restart the first queries use the exact scan until the background rebuild finishes.</li>
+            <li><strong>Scoped to ≤ 10,000 chunks per project.</strong> Above that the spec's recall and latency assumptions no longer hold.</li>
+          </ul>
+          <ul class="clean">
+            <li><strong>Defaults are unbenchmarked in the repo.</strong> M, efConstruction and efSearch are provisional; the 99% recall target has no committed measurement and no CI gate.</li>
+            <li><strong>Scans and Office files are out.</strong> A PDF without a text layer is rejected; DOCX and XLSX are refused outright.</li>
+            <li><strong>No cross-project eviction.</strong> Each cap is per project, so idle graphs stay resident.</li>
+          </ul>
+        </div>
+      </div>
+      <div class="footer"><span>Bridge Gateway · technical brief</span><span>16 / 18</span></div>
+    </section>
+
+    <!-- 17 · next steps -------------------------------------------------->
+    <section class="slide">
+      <div class="eyebrow">Next steps</div>
+      <div class="body">
+        <h2>Three priorities, in the order the evidence demands.</h2>
+        <div class="cols three">
+          <div class="card">
+            <span class="num">01</span>
+            <h3>Measure recall, then freeze defaults</h3>
+            <p>Run the spec's manual benchmark against exact search on a 10k-chunk corpus, and record the winning parameters.
+              Everything else tunes around this number.</p>
+          </div>
+          <div class="card">
+            <span class="num">02</span>
+            <h3>Put the index on the dashboard</h3>
+            <p>Build time, node and tombstone counts and the fallback rate already exist per project; aggregating them
+              turns "degraded" from a field into an alert.</p>
+          </div>
+          <div class="card">
+            <span class="num">03</span>
+            <h3>Decide the multi-instance topology</h3>
+            <p>Either a shared index or per-instance graphs with a documented trade-off. Today the honest answer
+              is one process, one file.</p>
+          </div>
+        </div>
+        <p class="note">Order matters: the recall figure determines whether the graph, the chunker or the embedding model is the thing worth changing next.</p>
+      </div>
+      <div class="footer"><span>Bridge Gateway · technical brief</span><span>17 / 18</span></div>
+    </section>
+
+    <!-- 18 · closing ----------------------------------------------------->
+    <section class="slide title">
+      <div class="eyebrow">The question</div>
+      <div class="title-grid" style="flex:1; align-items:center;">
+        <div>
+          <h1>What is the recall of this index on your corpus?</h1>
+          <p class="lede">The architecture is in place; the number is not. That is the one claim worth settling
+            before this ships to anyone who depends on an answer being complete.</p>
+        </div>
+        <dl class="kv">
+          <div><dt>To remember</dt><dd>Every retrieval says whether it used the graph or the exact scan.</dd></div>
+          <div><dt>To decide</dt><dd>Benchmark now and gate on recall, or ship with provisional defaults.</dd></div>
+        </dl>
+      </div>
+      <div class="footer"><span>Bridge Gateway · November 2026</span><span class="mono">docs/presentation.html · 18 / 18</span></div>
+    </section>
+
+  </div>
+</div>
+
+<div class="hint">← → · space · home / end · F for full screen</div>
+
+<div class="chrome">
+  <button id="prev" aria-label="Previous slide">←</button>
+  <span class="counter" id="counter">1 / 18</span>
+  <button id="next" aria-label="Next slide">→</button>
+</div>
+
+<script>
+  const slides = [...document.querySelectorAll('.slide')];
+  const stage = document.getElementById('stage');
+  const counter = document.getElementById('counter');
+  const progress = document.getElementById('progress');
+  let index = Math.min(slides.length - 1, Math.max(0, (parseInt(location.hash.slice(1), 10) || 1) - 1));
+
+  function show(next, replaceHash) {
+    index = (next + slides.length) % slides.length;
+    slides.forEach((slide, position) => slide.classList.toggle('active', position === index));
+    counter.textContent = `${index + 1} / ${slides.length}`;
+    progress.style.width = `${((index + 1) / slides.length) * 100}%`;
+    // A deck opened from disk has a null origin, where some browsers refuse
+    // replaceState; the hash is a convenience, never a requirement.
+    if (replaceHash !== false) {
+      try {
+        history.replaceState(null, '', `#${index + 1}`);
+      } catch (error) {
+        location.hash = String(index + 1);
+      }
+    }
+  }
+
+  function fit() {
+    const scale = Math.min(window.innerWidth / 1280, window.innerHeight / 720) * 0.94;
+    stage.style.transform = `scale(${scale})`;
+  }
+
+  window.addEventListener('resize', fit);
+  window.addEventListener('hashchange', () => {
+    const target = (parseInt(location.hash.slice(1), 10) || 1) - 1;
+    if (target !== index) show(target, false);
+  });
+
+  document.addEventListener('keydown', (event) => {
+    const key = event.key;
+    if (key === 'ArrowRight' || key === 'PageDown' || key === ' ' || key === 'Enter') {
+      event.preventDefault();
+      show(index + 1);
+    } else if (key === 'ArrowLeft' || key === 'PageUp' || key === 'Backspace') {
+      event.preventDefault();
+      show(index - 1);
+    } else if (key === 'Home') {
+      event.preventDefault();
+      show(0);
+    } else if (key === 'End') {
+      event.preventDefault();
+      show(slides.length - 1);
+    } else if (key === 'f' || key === 'F') {
+      if (document.fullscreenElement) document.exitFullscreen();
+      else document.documentElement.requestFullscreen();
+    }
+  });
+
+  document.getElementById('prev').addEventListener('click', () => show(index - 1));
+  document.getElementById('next').addEventListener('click', () => show(index + 1));
+
+  let touchStart = null;
+  document.addEventListener('touchstart', (event) => { touchStart = event.changedTouches[0].clientX; }, { passive: true });
+  document.addEventListener('touchend', () => {
+    if (touchStart === null) return;
+    const delta = event.changedTouches[0].clientX - touchStart;
+    if (Math.abs(delta) > 48) show(index + (delta < 0 ? 1 : -1));
+    touchStart = null;
+  }, { passive: true });
+
+  fit();
+  show(index, true);
+</script>
+</body>
+</html>

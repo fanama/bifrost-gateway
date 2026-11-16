@@ -60,6 +60,24 @@
       <label>Chevauchement (caractères)
         <input type="number" name="chunk_overlap" min="0" value="{{.Settings.ChunkOverlap}}" required>
       </label>
+      <label>M (liens par nœud)
+        <input type="number" name="hnsw_m" min="16" max="64" value="{{.Settings.HNSWM}}" required>
+      </label>
+      <label>efConstruction
+        <input type="number" name="hnsw_ef_construction" min="40" max="2000" value="{{.Settings.HNSWEfConstruction}}" required>
+      </label>
+      <label>efSearch
+        <input type="number" name="hnsw_ef_search" min="16" max="500" value="{{.Settings.HNSWEfSearch}}" required>
+      </label>
+      <label>Seuil de reconstruction (supprimés / nœuds)
+        <input type="number" name="hnsw_tombstone_rebuild_ratio" min="0.05" max="0.5" step="0.01" value="{{.Settings.HNSWTombstoneRebuildRatio}}" required>
+      </label>
+      <label>Limite mémoire de l'index (Mo)
+        <input type="number" name="hnsw_memory_limit_mb" min="8" max="1024" value="{{.Settings.HNSWMemoryLimitMB}}" required>
+      </label>
+      <label>Échantillonnage du rappel (0 = désactivé)
+        <input type="number" name="hnsw_recall_sample_rate" min="0" max="1" step="0.01" value="{{.Settings.HNSWRecallSampleRate}}">
+      </label>
     </div>
     <label>Consigne supplémentaire (optionnel)
       <textarea name="system_prompt" rows="4" placeholder="Ex : réponds en français et cite toujours les sources.">{{.Settings.SystemPrompt}}</textarea>
@@ -67,6 +85,32 @@
     <p class="note">Le découpage s'applique aux prochains imports. Changer de modèle d'embedding rend les passages existants incompatibles : réindexez les documents depuis la page de test.</p>
     <button class="btn" type="submit">Enregistrer</button>
   </form>
+</div>
+{{template "rag_index_card" .}}
+{{end}}
+
+{{define "rag_index_card"}}
+<div class="card" id="rag-index-card">
+  <div class="card-head">
+    <h3 class="card-title">Index HNSW</h3>
+    {{with .Status}}<span class="badge {{if eq .State "ready"}}ok{{end}}">{{.State}}</span>{{end}}
+  </div>
+  {{with .Status}}
+  <div class="meta-row">
+    <span class="badge">nœuds {{.Nodes}}</span>
+    <span class="badge">supprimés {{.Tombstones}}</span>
+    <span class="badge">mémoire {{.MemoryBytes}} o</span>
+    <span class="badge">limite {{.MemoryLimitBytes}} o</span>
+    <span class="badge">M {{.Params.M}} / efC {{.Params.EfConstruction}} / efS {{.Params.EfSearch}}</span>
+    {{if .EmbeddingModel}}<span class="badge">{{.EmbeddingModel}}</span>{{end}}
+  </div>
+  {{if .LastError}}<p class="note">Dernière erreur : {{.LastError}}</p>{{end}}
+  {{end}}
+  <form hx-post="/rag/index/rebuild" hx-target="#rag-index-card" hx-swap="outerHTML">
+    <input type="hidden" name="project_id" value="{{.ProjectID}}">
+    <button class="btn small" type="submit">Reconstruire l'index</button>
+  </form>
+  <p class="note">L'index est reconstruit depuis les passages stockés ; s'il est indisponible, la recherche bascule sur le scan exact et le signale.</p>
 </div>
 {{end}}
 
@@ -198,6 +242,8 @@
     <div class="meta-row">
       <span class="badge {{if .Result.HasContext}}ok{{end}}">{{if .Result.HasContext}}contexte trouvé{{else}}aucun passage{{end}}</span>
       {{if .Result.Model}}<span class="badge">{{.Result.Model}}</span>{{end}}
+      {{if .Result.IndexState}}<span class="badge">{{.Result.IndexState}}</span>{{end}}
+      {{if .Result.Degraded}}<span class="badge">scan exact (repli)</span>{{end}}
     </div>
   </div>
   <p class="muted hint">Question : {{.Question}}</p>
@@ -222,6 +268,7 @@
 <div class="card">
   <h3 class="card-title">Passages retrouvés</h3>
   <p class="muted hint">Question : {{.Question}}</p>
+  {{if .Degraded}}<p class="note">Index indisponible : résultats obtenus par scan exact.</p>{{end}}
   {{range .Chunks}}
   <div class="source-chunk">
     <div style="display:flex;justify-content:space-between;gap:10px;margin-bottom:6px">

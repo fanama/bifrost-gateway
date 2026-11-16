@@ -31,8 +31,9 @@ before each call.
   downloaded on first start unless `ONNX_AUTO_DOWNLOAD=0`.
 - **Retrieval-augmented generation** — project-scoped ingestion of text, PDF
   (parsed into Markdown) and images (OCR through the project's vision model),
-  cosine-similarity retrieval in SQLite, and cited answers grounded in the
-  retrieved passages under `/v1/rag/*`.
+  an in-memory HNSW index rebuilt from the stored vectors with an exact-scan
+  fallback, and cited answers grounded in the retrieved passages under
+  `/v1/rag/*`.
 - **Tier routing and failover** — a local classifier picks `fast`, `balanced`
   or `frontier`; provider saturation moves the request up the ladder and cools
   the failing tier down.
@@ -538,8 +539,8 @@ curl -X POST http://localhost:4000/v1/rag/query \
 removes a document, and `POST /v1/rag/search` returns passages without calling
 the model. The same workflow is available in the web UI under **RAG Test**;
 embedding model, `top_k`, chunking and extra instructions are configured per
-project under **RAG Paramètres**. The master key must name the project with
-`X-Project-ID` or `?project_id=`.
+project under **RAG Paramètres**. Every `/v1/rag/*` call requires a project API
+key: the project is derived from that token, and the master key is rejected.
 
 Supported uploads are text, Markdown, CSV, JSON, log, YAML, XML, HTML, PDF and
 images (PNG, JPEG, WebP, GIF, BMP, TIFF), 25 MiB maximum. Office files are
@@ -562,7 +563,19 @@ configuration the upload fails with an explicit message.
 
 Chunking targets the configured `chunk_size` but snaps back to the nearest
 paragraph or line boundary, so the Markdown structure survives into the
-passages rather than being cut mid-word. The request and response shapes are in
+passages rather than being cut mid-word.
+
+Retrieval uses a per-project, in-memory HNSW graph built from the stored
+vectors. The graph is rebuilt from SQLite after a restart, updated by
+ingestions, and keeps deletions as tombstones until a compaction rebuild. Any
+cold, over-capacity or failed state falls back to the exact cosine scan and
+sets `degraded: true` in the response. The parameters (`hnsw_m`,
+`hnsw_ef_construction`, `hnsw_ef_search`, tombstone ratio and memory cap) live
+on the RAG settings page; `GET /v1/rag/index/status` and
+`POST /v1/rag/index/rebuild` expose the same status to scripts. The design and
+open decisions are documented in `hnsw-spec.md`.
+
+The request and response shapes are in
 `docs/openapi.yaml`, also served at `/openapi.yaml`.
 
 ### Models and errors

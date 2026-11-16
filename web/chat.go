@@ -69,7 +69,7 @@ func (s *chatController) updateChatConfig(w http.ResponseWriter, r *http.Request
 		s.renderToast(w, "#chat-error", err.Error())
 		return
 	}
-	patch := parseConfigForm(r)
+	patch := parseConfigForm(r, s.providerNames(r.Context()))
 	patch.ResponseSchema = parseSchemaRows(r)
 	patch.ProjectID = existing.ProjectID
 	if _, err := s.configs.Update(r.Context(), cid, patch); err != nil {

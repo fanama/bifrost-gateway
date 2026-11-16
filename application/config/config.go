@@ -42,6 +42,7 @@ func (u *ConfigUseCase) Create(ctx context.Context, cfg *domain.ChatConfig) (*do
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
+	cfg.FallbackModels = fallbackOnly(cfg)
 	cfg.ID = u.idGen()
 	cfg.CreatedAt = u.now().UTC()
 	cfg.UpdatedAt = cfg.CreatedAt
@@ -63,6 +64,7 @@ func (u *ConfigUseCase) Update(ctx context.Context, id string, patch *domain.Cha
 	existing.Name = strings.TrimSpace(patch.Name)
 	existing.Provider = strings.ToLower(strings.TrimSpace(patch.Provider))
 	existing.Model = strings.TrimSpace(patch.Model)
+	existing.FallbackModels = fallbackOnly(existing)
 	existing.Tier = strings.ToLower(strings.TrimSpace(patch.Tier))
 	existing.BaseURL = strings.TrimSpace(patch.BaseURL)
 	existing.APIKey = strings.TrimSpace(patch.APIKey)
@@ -87,6 +89,18 @@ func (u *ConfigUseCase) Update(ctx context.Context, id string, patch *domain.Cha
 
 func (u *ConfigUseCase) Delete(ctx context.Context, id string) error {
 	return u.repo.Delete(ctx, id)
+}
+
+// fallbackOnly ne garde que la chaine de repli : le modele principal est deja
+// porte par Model. Le nettoyage, l'heritage du provider et la deduplication
+// appartiennent au domaine (domain.ModelCandidates), pour que la saisie et
+// l'execution concordent.
+func fallbackOnly(cfg *domain.ChatConfig) []domain.ModelChoice {
+	chain := domain.ModelCandidates(cfg.Provider, cfg.Model, cfg.FallbackModels)
+	if len(chain) <= 1 {
+		return nil
+	}
+	return chain[1:]
 }
 
 func (u *ConfigUseCase) SetActive(ctx context.Context, projectID string, id string) (*domain.ChatConfig, error) {

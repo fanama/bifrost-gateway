@@ -102,10 +102,11 @@ func TestProjectConfigModelsHandler(t *testing.T) {
 
 	// 3. Edit config form includes data-base-url and data-api-key attributes on provider options
 	cfg, _ := configUC.Create(ctx, &domain.ChatConfig{
-		ProjectID: proj.ID,
-		Name:      "Cfg 1",
-		Provider:  "mistral",
-		Model:     "mistral-large",
+		ProjectID:      proj.ID,
+		Name:           "Cfg 1",
+		Provider:       "mistral",
+		Model:          "mistral-large",
+		FallbackModels: []domain.ModelChoice{{Provider: "mistral", Model: "mistral-small"}},
 	})
 
 	reqEdit := httptest.NewRequest("GET", "/projects/"+proj.ID+"/configs/"+cfg.ID+"/edit", nil)
@@ -130,5 +131,26 @@ func TestProjectConfigModelsHandler(t *testing.T) {
 	}
 	if !strings.Contains(bodyEdit, `name="response_schema"`) {
 		t.Fatalf("expected response_schema textarea in edit form, got: %s", bodyEdit)
+	}
+	if !strings.Contains(bodyEdit, `name="fallback_provider[]"`) {
+		t.Fatalf("expected fallback provider select in edit form, got: %s", bodyEdit)
+	}
+	if !strings.Contains(bodyEdit, `value="mistral-small" selected`) {
+		t.Fatalf("expected saved fallback model selected, got: %s", bodyEdit)
+	}
+
+	// 4. GET /projects/{pid}/configs/fallback-row returns a fresh selectable row
+	reqRow := httptest.NewRequest("GET", "/projects/"+proj.ID+"/configs/fallback-row?provider=mistral", nil)
+	recRow := httptest.NewRecorder()
+	mux.ServeHTTP(recRow, reqRow)
+	if recRow.Code != http.StatusOK {
+		t.Fatalf("expected 200 for fallback row, got %d", recRow.Code)
+	}
+	rowBody := recRow.Body.String()
+	if !strings.Contains(rowBody, `name="fallback_provider[]"`) || !strings.Contains(rowBody, `name="fallback_model[]"`) {
+		t.Fatalf("expected provider and model selects in fallback row, got: %s", rowBody)
+	}
+	if !strings.Contains(rowBody, "mistral-large") {
+		t.Fatalf("expected mistral models in fallback row, got: %s", rowBody)
 	}
 }

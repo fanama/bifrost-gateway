@@ -93,6 +93,10 @@ func (p *CachedLLMProvider) cacheKey(cfg *domain.ChatConfig, messages []domain.C
 
 	writeField("provider", cfg.Provider)
 	writeField("model", cfg.Model)
+	// La chaine de repli fait partie de la requete : deux configurations qui
+	// partagent le modele principal mais pas les replis ne doivent pas partager
+	// l'entree qu'un repli a produite.
+	writeField("fallback_models", modelChainKey(cfg))
 	writeField("tier", cfg.Tier)
 	writeField("base_url", cfg.BaseURL)
 	writeField("temperature", fmt.Sprintf("%g", valueOrZero(cfg.Temperature)))
@@ -113,6 +117,16 @@ func (p *CachedLLMProvider) cacheKey(cfg *domain.ChatConfig, messages []domain.C
 	}
 
 	return p.keys.Key(hex.EncodeToString(h.Sum(nil))), nil
+}
+
+// modelChainKey serialise la chaine effective (provider et modele de chaque
+// entree) pour que deux chaines differentes ne partagent jamais une entree.
+func modelChainKey(cfg *domain.ChatConfig) string {
+	labels := make([]string, 0, len(cfg.Candidates()))
+	for _, choice := range cfg.Candidates() {
+		labels = append(labels, choice.Label())
+	}
+	return strings.Join(labels, "\x1f")
 }
 
 // valueOrZero rend un pointeur nil et sa valeur pointee indiscernables pour la

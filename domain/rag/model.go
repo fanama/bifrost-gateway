@@ -74,10 +74,12 @@ type Source struct {
 
 // Answer is an LLM reply grounded in the retrieved passages.
 type Answer struct {
-	Answer     string   `json:"answer"`
-	Sources    []Source `json:"sources"`
-	HasContext bool     `json:"has_context"`
-	Model      string   `json:"model,omitempty"`
+	Answer     string     `json:"answer"`
+	Sources    []Source   `json:"sources"`
+	HasContext bool       `json:"has_context"`
+	Model      string     `json:"model,omitempty"`
+	Degraded   bool       `json:"degraded"`
+	IndexState IndexState `json:"index_state,omitempty"`
 }
 
 // DocumentRepository is the persistence port for indexed documents.

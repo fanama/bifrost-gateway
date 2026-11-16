@@ -55,7 +55,8 @@ func seedCatalogModels(ctx context.Context, catalogUseCase *application.ModelCat
 }
 
 // buildLLMProvider assemble le provider de chat avec ses decorateurs, du plus
-// externe au plus interne : cache -> routeur -> (chat ONNX local ou Bifrost).
+// externe au plus interne : cache -> routeur -> chaine de modeles -> (chat ONNX
+// local ou Bifrost).
 //
 // Le cache doit entourer le routeur pour que la cle soit calculee sur la
 // configuration active et qu'un hit evite a la fois l'appel au classifieur
@@ -72,9 +73,12 @@ func buildLLMProvider(
 	llmCache domain.Cache,
 	metrics *infrastructure.MetricsCollector,
 ) domain.LLMProvider {
-	var llm domain.LLMProvider = infrastructure.NewOnnxChatRouter(onnxChatProvider, bifrostProvider).WithCatalog(catalogStore)
+	onnxRouter := infrastructure.NewOnnxChatRouter(onnxChatProvider, bifrostProvider).WithCatalog(catalogStore)
+	// Chaque configuration porte sa chaine de modeles : le repli s'applique
+	// sous le routeur, pour que le tier choisi garde ses propres replis.
+	var llm domain.LLMProvider = infrastructure.NewModelFallbackLLMProvider(onnxRouter)
 	if cfg.Routing.Enabled {
-		llm = newRoutingProvider(cfg, bifrostProvider, configStore, providerStore)
+		llm = newRoutingProvider(cfg, infrastructure.NewModelFallbackLLMProvider(bifrostProvider), bifrostProvider, configStore, providerStore)
 	}
 	return withLLMDecorators(cfg, llm, llmCache, metrics)
 }
@@ -84,6 +88,7 @@ func buildLLMProvider(
 // failover ladder's work.
 func newRoutingProvider(
 	cfg *infrastructure.GatewayConfig,
+	inner domain.LLMProvider,
 	bifrostProvider *infrastructure.BifrostLLMProvider,
 	configStore domain.ChatConfigRepository,
 	providerStore domain.ProviderRepository,
@@ -91,7 +96,7 @@ func newRoutingProvider(
 	bifrostProvider.SetMaxRetries(cfg.Routing.MaxRetries)
 	classifier := infrastructure.NewLocalClassifier(bifrostProvider, cfg.Routing.Classifier)
 	router := infrastructure.NewRoutingLLMProvider(
-		bifrostProvider, classifier, configStore, providerStore,
+		inner, classifier, configStore, providerStore,
 		infrastructure.RoutingOptions{
 			MinConfidence: cfg.Routing.NormalizedMinConfidence(0.6),
 			Cooldown:      cfg.Routing.CooldownTTL(60 * time.Second),

@@ -43,13 +43,13 @@ func (h *Handler) HandleSearch(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	chunks, err := h.rag.Search(r.Context(), projectID, req.Question, req.options())
+	result, err := h.rag.Search(r.Context(), projectID, req.Question, req.options())
 	if err != nil {
 		httpx.WriteDomainError(w, err)
 		return
 	}
-	hits := make([]searchHit, 0, len(chunks))
-	for _, item := range chunks {
+	hits := make([]searchHit, 0, len(result.Chunks))
+	for _, item := range result.Chunks {
 		hits = append(hits, searchHit{
 			DocumentID: item.Chunk.DocumentID,
 			FileName:   item.Chunk.FileName,
@@ -58,7 +58,12 @@ func (h *Handler) HandleSearch(w http.ResponseWriter, r *http.Request) {
 			Score:      item.Score,
 		})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"chunks": hits, "total": len(hits)})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"chunks":      hits,
+		"total":       len(hits),
+		"degraded":    result.Degraded,
+		"index_state": result.IndexState,
+	})
 }
 
 func (h *Handler) decodeQuery(w http.ResponseWriter, r *http.Request) (*queryRequest, string, bool) {

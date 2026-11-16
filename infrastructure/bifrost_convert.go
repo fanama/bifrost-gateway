@@ -132,7 +132,7 @@ func chatParams(cfg *domain.ChatConfig) *schemas.ChatParameters {
 	}
 	// "none" desactive explicitement le thinking d'un modele qui raisonne par
 	// defaut ; une valeur vide laisse le provider decider.
-	if effort := strings.TrimSpace(cfg.ReasoningEffort); effort != "" {
+	if effort := strings.TrimSpace(cfg.EffectiveReasoningEffort()); effort != "" {
 		params.Reasoning = &schemas.ChatReasoning{Effort: &effort}
 	}
 	if params.Temperature == nil &&

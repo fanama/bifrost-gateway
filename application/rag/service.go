@@ -36,6 +36,7 @@ type Service struct {
 	configs   domain.ChatConfigRepository
 	settings  domainrag.SettingsRepository
 	llm       domain.LLMProvider
+	index     domainrag.ChunkIndex
 	ids       func() string
 	now       func() time.Time
 }
@@ -61,6 +62,13 @@ func NewService(
 		ids:       domain.NewID,
 		now:       time.Now,
 	}
+}
+
+// WithIndex attaches the optional vector index. A nil index keeps the historical
+// exact-scan behaviour, which is what tests and degraded deployments use.
+func (s *Service) WithIndex(index domainrag.ChunkIndex) *Service {
+	s.index = index
+	return s
 }
 
 func trimProject(projectID string) string {

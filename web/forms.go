@@ -11,12 +11,13 @@ import (
 
 // Parsing et relecture des formulaires de configuration : parties pures,
 // partagees par le chat et les projets, sans dependance au rendu.
-func parseConfigForm(r *http.Request) *domain.ChatConfig {
+func parseConfigForm(r *http.Request, providers []string) *domain.ChatConfig {
 	_ = r.ParseForm()
 	return &domain.ChatConfig{
 		Name:             strings.TrimSpace(r.FormValue("name")),
 		Provider:         strings.ToLower(strings.TrimSpace(r.FormValue("provider"))),
 		Model:            strings.TrimSpace(r.FormValue("model")),
+		FallbackModels:   parseFallbackChoices(r, providers),
 		Tier:             strings.ToLower(strings.TrimSpace(r.FormValue("tier"))),
 		BaseURL:          strings.TrimSpace(r.FormValue("base_url")),
 		APIKey:           strings.TrimSpace(r.FormValue("api_key")),
@@ -157,6 +158,10 @@ type configFormData struct {
 	SelectedProvider string
 	SelectedModel    string
 	Models           []string
+	SelectID         string
+	ModelField       string
+	Required         bool
+	Fallbacks        []fallbackRowData
 	// SchemaFields restitue les champs du schema enregistre pour que l'edition
 	// parte de l'etat reel plutot que d'un formulaire vide.
 	SchemaFields     []schemaRow
@@ -167,6 +172,19 @@ type configFormData struct {
 	// json_schema meme si le select avait ete laisse sur "aucun". Afficher la
 	// valeur brute laisserait croire que le schema est ignore.
 	EditingFormat string
+}
+
+// fallbackRowData alimente une ligne du selecteur de repli : provider choisi,
+// modele choisi et modeles connus pour ce provider.
+type fallbackRowData struct {
+	ProjectID        string
+	Providers        []domain.Provider
+	SelectedProvider string
+	SelectedModel    string
+	Models           []string
+	SelectID         string
+	ModelField       string
+	Required         bool
 }
 
 // schemaRowsFromStored relit un schema enregistre pour reafficher ses champs.

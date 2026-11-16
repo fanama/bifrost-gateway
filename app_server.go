@@ -81,6 +81,11 @@ func (a *gatewayApp) serve(port int) error {
 }
 
 func (a *gatewayApp) close() {
+	// Wait for in-flight index rebuilds before closing storage: they load
+	// vectors from SQLite and must not observe a closed database.
+	if a.ragIndex != nil {
+		a.ragIndex.Wait()
+	}
 	if a.storeCache != nil && a.cfg.Cache.Stores.Enabled {
 		a.storeCache.Stop()
 	}

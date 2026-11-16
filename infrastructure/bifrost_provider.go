@@ -106,7 +106,7 @@ func (p *BifrostLLMProvider) Chat(ctx context.Context, cfg *domain.ChatConfig, m
 
 	resp, err := client.ChatCompletion(ctx, provider, cfg.Model, toBifrostMessages(messages), chatParams(cfg))
 	if err != nil {
-		return domain.LLMResult{}, err
+		return domain.LLMResult{}, fmt.Errorf("provider %s (%s): %w", cfg.Provider, cfg.Model, err)
 	}
 	return domain.LLMResult{Content: ExtractAssistantContent(resp), Model: cfg.Model}, nil
 }
@@ -132,7 +132,7 @@ func (p *BifrostLLMProvider) ChatStream(ctx context.Context, cfg *domain.ChatCon
 
 	source, err := client.ChatCompletionStream(ctx, provider, cfg.Model, toBifrostMessages(messages), chatParams(cfg))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("provider %s (%s): %w", cfg.Provider, cfg.Model, err)
 	}
 
 	return pumpBifrostStream(ctx, source, cfg.Model), nil
@@ -214,7 +214,7 @@ func (p *BifrostLLMProvider) Embed(ctx context.Context, cfg *domain.ChatConfig, 
 
 	resp, err := client.Embedding(ctx, provider, model, &input, params)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("provider %s (%s): %w", cfg.Provider, model, err)
 	}
 
 	return toDomainEmbeddingResponse(resp, model), nil

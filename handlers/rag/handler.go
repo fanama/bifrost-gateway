@@ -20,26 +20,14 @@ func NewHandler(auth httpx.Authenticator, service httpx.RAGService) *Handler {
 	return &Handler{auth: auth, rag: service}
 }
 
-// scope authenticates the caller and resolves the project it acts on. The
-// master key must name a project explicitly; a project key always acts on its
-// own project.
+// scope authenticates the caller and binds the request to the project carried
+// by its API key. RAG routes never accept the master key or a project chosen by
+// the client: the token is the only source of tenancy.
 func (h *Handler) scope(w http.ResponseWriter, r *http.Request) (string, bool) {
 	result, err := h.auth.Authenticate(r.Context(), r.Header.Get("Authorization"))
-	if err != nil {
+	if err != nil || result.Scope != "project" {
 		httpx.WriteUnauthorized(w)
 		return "", false
-	}
-	if result.Scope == "master" {
-		id := strings.TrimSpace(r.Header.Get("X-Project-ID"))
-		if id == "" {
-			id = strings.TrimSpace(r.URL.Query().Get("project_id"))
-		}
-		if id == "" {
-			httpx.WriteAPIError(w, http.StatusBadRequest, httpx.ErrTypeInvalidRequest,
-				"project_id", "", "project_id is required when using the master key")
-			return "", false
-		}
-		return id, true
 	}
 	if result.Project == nil || strings.TrimSpace(result.Project.ID) == "" {
 		httpx.WriteUnauthorized(w)

@@ -100,6 +100,27 @@ func TestChatParamsKeepsReasoningNone(t *testing.T) {
 	}
 }
 
+func TestChatParamsDropsReasoningForUnsupportedProvider(t *testing.T) {
+	cfg := &domain.ChatConfig{
+		Provider:        "mistral",
+		Model:           "ministral-14b-latest",
+		ReasoningEffort: "minimal",
+	}
+	if params := chatParams(cfg); params != nil {
+		t.Fatalf("reasoning must not be sent to mistral, got %#v", params)
+	}
+
+	cfg.Provider = "openai"
+	cfg.Model = "gpt-5"
+	params := chatParams(cfg)
+	if params == nil || params.Reasoning == nil || params.Reasoning.Effort == nil {
+		t.Fatalf("expected reasoning for a supported provider, got %#v", params)
+	}
+	if *params.Reasoning.Effort != "minimal" {
+		t.Errorf("reasoning effort: got %q", *params.Reasoning.Effort)
+	}
+}
+
 func TestDynamicAccountDefaultsOllamaBaseURL(t *testing.T) {
 	acc := NewDynamicAccount(&domain.ChatConfig{
 		Provider: "ollama",

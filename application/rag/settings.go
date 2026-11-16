@@ -50,6 +50,11 @@ func (s *Service) SaveSettings(ctx context.Context, settings *domainrag.Settings
 	if err := s.settings.Save(ctx, &saved); err != nil {
 		return nil, err
 	}
+	// A parameter or embedding-model change invalidates the graph, so rebuild
+	// it in the background instead of waiting for the next query to notice.
+	if s.index != nil {
+		_ = s.index.Rebuild(ctx, saved.ProjectID, saved.EmbeddingModel, saved.IndexOptions())
+	}
 	return &saved, nil
 }
 

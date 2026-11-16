@@ -10,18 +10,22 @@ import (
 )
 
 type ChatConfig struct {
-	ID           string   `json:"id"`
-	ProjectID    string   `json:"project_id"`
-	Name         string   `json:"name"`
-	Provider     string   `json:"provider"`
-	Model        string   `json:"model"`
-	Tier         string   `json:"tier,omitempty"`
-	BaseURL      string   `json:"base_url,omitempty"`
-	APIKey       string   `json:"api_key,omitempty"`
-	SystemPrompt string   `json:"system_prompt,omitempty"`
-	Temperature  *float64 `json:"temperature,omitempty"`
-	TopP         *float64 `json:"top_p,omitempty"`
-	MaxTokens    *int     `json:"max_tokens,omitempty"`
+	ID        string `json:"id"`
+	ProjectID string `json:"project_id"`
+	Name      string `json:"name"`
+	Provider  string `json:"provider"`
+	Model     string `json:"model"`
+	// FallbackModels est la chaine de repli, essayee dans l'ordre quand Model
+	// echoue (quota, modele retire, indisponibilite). Chaque entree peut viser
+	// un autre provider. Vide : Model seul.
+	FallbackModels []ModelChoice `json:"fallback_models,omitempty"`
+	Tier           string        `json:"tier,omitempty"`
+	BaseURL        string        `json:"base_url,omitempty"`
+	APIKey         string        `json:"api_key,omitempty"`
+	SystemPrompt   string        `json:"system_prompt,omitempty"`
+	Temperature    *float64      `json:"temperature,omitempty"`
+	TopP           *float64      `json:"top_p,omitempty"`
+	MaxTokens      *int          `json:"max_tokens,omitempty"`
 	// ReasoningEffort regle le thinking des modeles de raisonnement : "none"
 	// le desactive, les autres niveaux le dosent. Vide laisse le comportement
 	// par defaut du provider, qui peut raisonner de lui-meme.
@@ -85,6 +89,9 @@ func (c *ChatConfig) validateSampling() error {
 	if !ValidReasoningEffort(c.ReasoningEffort) {
 		return &errs.ValidationError{Fields: []string{"reasoning_effort"}, Reason: "doit valoir none, minimal, low, medium, high ou etre vide"}
 	}
+	if c.ReasoningEffort != "" && c.ReasoningEffort != "none" && !ProviderSupportsReasoning(c.Provider) {
+		return &errs.ValidationError{Fields: []string{"reasoning_effort"}, Reason: "n'est pas pris en charge par le provider " + c.Provider}
+	}
 	if c.FrequencyPenalty != nil && (*c.FrequencyPenalty < -2 || *c.FrequencyPenalty > 2) {
 		return &errs.ValidationError{Fields: []string{"frequency_penalty"}, Reason: "doit etre compris entre -2 et 2"}
 	}
@@ -123,6 +130,31 @@ func ValidReasoningEffort(effort string) bool {
 		}
 	}
 	return false
+}
+
+// reasoningUnsupportedProviders lists providers whose chat API does not accept
+// reasoning_effort. Mistral answers with an opaque HTTP 400 when the field is
+// present, so it must be dropped before the request reaches Bifrost. Local
+// runtimes have no thinking level at all.
+var reasoningUnsupportedProviders = map[string]struct{}{
+	"mistral": {}, "mistralai": {},
+	"local": {}, "onnx": {},
+}
+
+// ProviderSupportsReasoning reports whether a provider accepts reasoning_effort.
+func ProviderSupportsReasoning(provider string) bool {
+	_, unsupported := reasoningUnsupportedProviders[strings.ToLower(strings.TrimSpace(provider))]
+	return !unsupported
+}
+
+// EffectiveReasoningEffort returns the level that will actually be sent to the
+// provider. A legacy record can still carry a level for a provider that does
+// not support it; in that case the provider default applies.
+func (c *ChatConfig) EffectiveReasoningEffort() string {
+	if c == nil || !ProviderSupportsReasoning(c.Provider) {
+		return ""
+	}
+	return c.ReasoningEffort
 }
 
 type ChatConfigRepository interface {

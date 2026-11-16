@@ -30,4 +30,6 @@ func RegisterRAGRoutes(mux *http.ServeMux, rag *RAGHandler) {
 	mux.HandleFunc("/v1/rag/documents/", rag.HandleDocumentByID)
 	mux.HandleFunc("/v1/rag/query", rag.HandleQuery)
 	mux.HandleFunc("/v1/rag/search", rag.HandleSearch)
+	mux.HandleFunc("/v1/rag/index/status", rag.HandleIndexStatus)
+	mux.HandleFunc("/v1/rag/index/rebuild", rag.HandleIndexRebuild)
 }
