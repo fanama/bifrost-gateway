@@ -161,6 +161,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 func (s *Server) registerMonitoring(mux *http.ServeMux) {
 	mux.HandleFunc("GET /monitoring", s.monitoring.pageMonitoring)
 	mux.HandleFunc("GET /monitoring/stats", s.monitoring.stats)
+	mux.HandleFunc("GET /monitoring/events", s.monitoring.events)
 	mux.HandleFunc("GET /monitoring/metrics.json", s.monitoring.metricsJSON)
 	mux.HandleFunc("GET /monitoring/logs", s.monitoring.logsModal)
 	mux.HandleFunc("GET /monitoring/logs.json", s.monitoring.logsJSON)

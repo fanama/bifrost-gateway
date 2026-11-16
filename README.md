@@ -38,8 +38,8 @@ before each call.
   or `frontier`; provider saturation moves the request up the ladder and cools
   the failing tier down.
 - **In-process monitoring** — traffic, p50/p95/p99 latency, routes, recent
-  errors and LLM calls at `/monitoring`, with a JSON snapshot at
-  `/monitoring/metrics.json`.
+  errors and LLM calls at `/monitoring`, with a live SSE feed at
+  `/monitoring/events` and a JSON snapshot at `/monitoring/metrics.json`.
 - **SQLite persistence** — a single file, no external database or cache
   service. Legacy JSON stores from `data/` are imported automatically.
 
@@ -277,7 +277,8 @@ port is configured.
 | `/projects/{pid}/keys/{kid}` | DELETE | Revoke an API key |
 | `/configs` | GET | Redirect to `/projects` (legacy URL) |
 | `/monitoring` | GET | Monitoring dashboard |
-| `/monitoring/stats` | GET | Auto-refreshing HTMX fragment |
+| `/monitoring/stats` | GET | HTMX dashboard fragment |
+| `/monitoring/events` | GET | SSE stream of dashboard fragments (pub/sub) |
 | `/monitoring/metrics.json` | GET | JSON metrics snapshot |
 | `/monitoring/logs` | GET | LLM call log modal fragment (inputs and outputs) |
 | `/monitoring/logs.json` | GET | LLM call log export (JSON download) |
@@ -436,6 +437,15 @@ cancellation are not. Routing is disabled by default in `config.yaml`.
 route counts, recent errors, Go runtime statistics and LLM calls.
 `/monitoring/metrics.json` returns the same snapshot for scraping or uptime
 checks. Metrics are collected in-process; no agent is required.
+
+`/monitoring/events` is a Server-Sent Events stream: the collector publishes a
+snapshot after each recorded request or LLM call, throttled to two frames per
+second and coalesced per subscriber so a slow client resumes on the newest
+state. The page replaces its dashboard fragment on every `dashboard` event, a
+keep-alive comment every 15 s holds the connection through proxies, and a 3 s
+refresh keeps the timeline moving on an idle gateway. `EventSource` reconnects
+automatically, and the handler clears the server write deadline for the
+connection only.
 
 The **Logs** button opens a modal with the last 100 LLM calls: the messages sent
 to the provider, the answer it produced, the model that actually served it, the

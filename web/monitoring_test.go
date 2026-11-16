@@ -20,6 +20,11 @@ func (s stubMetrics) Snapshot() domain.MetricsSnapshot { return s.snapshot }
 
 func (s stubMetrics) Logs() []domain.CallLog { return s.logs }
 
+func (s stubMetrics) Subscribe() (<-chan domain.MetricsSnapshot, func()) {
+	feed := make(chan domain.MetricsSnapshot)
+	return feed, func() {}
+}
+
 func newMonitoringServer(t *testing.T) (*http.ServeMux, domain.MetricsSnapshot) {
 	t.Helper()
 
@@ -95,8 +100,8 @@ func TestMonitoringPageRendersDashboard(t *testing.T) {
 			t.Fatalf("page is missing %q", want)
 		}
 	}
-	// La page porte l'auto-refresh HTMX et la balise du fragment.
-	for _, want := range []string{`hx-get="/monitoring/stats"`, `hx-trigger="every 3s"`, `id="monitoring-dashboard"`} {
+	// La page alimente le fragment par SSE et garde le rafraichissement manuel.
+	for _, want := range []string{`id="monitoring-dashboard"`, `new EventSource('/monitoring/events')`, `hx-get="/monitoring/stats"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("page is missing %q", want)
 		}

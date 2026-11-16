@@ -44,7 +44,12 @@ func (s *monitoringController) metricsJSON(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *monitoringController) view() monitoringView {
-	snapshot := s.snapshot()
+	return newMonitoringView(s.snapshot())
+}
+
+// newMonitoringView ajoute les valeurs de presentation (hauteur des barres) a
+// un instantane. Le fragment HTMX et le flux SSE rendent le meme modele.
+func newMonitoringView(snapshot domain.MetricsSnapshot) monitoringView {
 	view := monitoringView{
 		Title:           "Monitoring",
 		Active:          "monitoring",
@@ -56,6 +61,15 @@ func (s *monitoringController) view() monitoringView {
 		}
 	}
 	return view
+}
+
+// subscribe rend le flux pub/sub du collecteur. Sans collecteur branche (tests
+// de l'UI), le flux est nil : seuls les rafraichissements periodiques passent.
+func (s *monitoringController) subscribe() (<-chan domain.MetricsSnapshot, func()) {
+	if s.metrics == nil {
+		return nil, func() {}
+	}
+	return s.metrics.Subscribe()
 }
 
 func (s *monitoringController) snapshot() domain.MetricsSnapshot {

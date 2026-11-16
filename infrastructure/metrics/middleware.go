@@ -18,6 +18,10 @@ func (m *MetricsCollector) Middleware(next http.Handler) http.Handler {
 		recorder := &metricsResponseWriter{ResponseWriter: w}
 
 		defer func() {
+			// Diffuse l'etat mis a jour : la publication est differee pour
+			// couvrir aussi les chemins de panique et d'abandon.
+			defer m.publishSnapshot()
+
 			recovered := recover()
 			status := recorder.statusOr(http.StatusOK)
 

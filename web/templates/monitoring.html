@@ -15,14 +15,28 @@
       <button class="btn ghost small" hx-get="/monitoring/stats" hx-target="#monitoring-dashboard" hx-swap="innerHTML">Rafraîchir</button>
     </div>
   </div>
-  <section id="monitoring-dashboard"
-           hx-get="/monitoring/stats"
-           hx-trigger="every 3s"
-           hx-swap="innerHTML"
-           hx-sync="this:replace">
+  <section id="monitoring-dashboard">
     {{template "monitoring_dashboard" .}}
   </section>
   <dialog id="logs-modal" class="card logs-dialog"></dialog>
+  <script>
+  // Le tableau de bord est pousse par SSE : une seule connexion, et chaque
+  // snapshot publie remplace le fragment. EventSource se reconnecte seul.
+  (function () {
+    var dashboard = document.getElementById('monitoring-dashboard');
+    if (!dashboard || typeof window.EventSource === 'undefined') return;
+    var source = new EventSource('/monitoring/events');
+    source.addEventListener('dashboard', function (event) {
+      dashboard.innerHTML = event.data;
+    });
+    function close() { source.close(); }
+    window.addEventListener('beforeunload', close);
+    // Navigation HTMX : le document reste le meme, donc on ferme le flux.
+    document.addEventListener('htmx:beforeSwap', function (event) {
+      if (event.detail && event.detail.target === document.body) close();
+    });
+  })();
+  </script>
 </main>
 {{template "tail" .}}
 </body>

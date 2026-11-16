@@ -72,6 +72,10 @@ type MetricsCollector struct {
 
 	mu sync.Mutex
 
+	// lastPublish borne la cadence des trames SSE (voir publish.go).
+	lastPublish time.Time
+	broker      *broker
+
 	inFlight int64
 
 	total       int64
@@ -98,6 +102,7 @@ func NewMetricsCollector() *MetricsCollector {
 	return &MetricsCollector{
 		startedAt: now(),
 		now:       now,
+		broker:    newBroker(),
 		routes:    make(map[string]*routeAccumulator),
 		llm: llmAccumulator{
 			models: make(map[string]*llmModelAccumulator),

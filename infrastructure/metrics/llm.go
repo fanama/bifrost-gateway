@@ -12,8 +12,14 @@ func (m *MetricsCollector) BeginLLM() {
 // cache de reponses est place au-dessus : un hit n'arrive jamais ici.
 func (m *MetricsCollector) RecordLLM(provider, model string, duration time.Duration, err error, stream bool) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.recordLLMLocked(provider, model, duration, err, stream)
+	m.mu.Unlock()
 
+	// Hors verrou : publishSnapshot lit les compteurs sous verrou a son tour.
+	m.publishSnapshot()
+}
+
+func (m *MetricsCollector) recordLLMLocked(provider, model string, duration time.Duration, err error, stream bool) {
 	if m.llm.inFlight > 0 {
 		m.llm.inFlight--
 	}

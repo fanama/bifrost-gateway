@@ -19,12 +19,14 @@ func (m *MetricsCollector) RecordLLMLog(entry domain.CallLog) {
 	entry.Output = truncateField(entry.Output)
 
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	m.logs = append(m.logs, entry)
 	if len(m.logs) > metricsLogHistory {
 		m.logs = m.logs[len(m.logs)-metricsLogHistory:]
 	}
+	m.mu.Unlock()
+
+	// Hors verrou : le hub publie un instantane a jour aux abonnes SSE.
+	m.publishSnapshot()
 }
 
 // Logs rend une copie du journal, le plus recent d'abord. La copie est faite

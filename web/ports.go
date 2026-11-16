@@ -92,4 +92,7 @@ type metricsService interface {
 	Snapshot() domain.MetricsSnapshot
 	// Logs rend les derniers appels LLM, le plus recent d'abord.
 	Logs() []domain.CallLog
+	// Subscribe ouvre le flux pub/sub des instantanes pour le tableau de
+	// bord SSE. La fonction rendue libere l'abonnement.
+	Subscribe() (<-chan domain.MetricsSnapshot, func())
 }
