@@ -100,22 +100,24 @@
 <div class="mon-columns">
   <div class="mon-card">
     <h3>Latence</h3>
-    <table>
-      <thead>
-        <tr><th>p50</th><th>p95</th><th>p99</th><th>Moyenne</th><th>Min</th><th>Max</th><th>Échantillons</th></tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td>{{dur .Latency.P50}}</td>
-          <td>{{dur .Latency.P95}}</td>
-          <td>{{dur .Latency.P99}}</td>
-          <td>{{dur .Latency.Avg}}</td>
-          <td>{{dur .Latency.Min}}</td>
-          <td>{{dur .Latency.Max}}</td>
-          <td>{{.Latency.Samples}}</td>
-        </tr>
-      </tbody>
-    </table>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>p50</th><th>p95</th><th>p99</th><th>Moyenne</th><th>Min</th><th>Max</th><th>Échantillons</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>{{dur .Latency.P50}}</td>
+            <td>{{dur .Latency.P95}}</td>
+            <td>{{dur .Latency.P99}}</td>
+            <td>{{dur .Latency.Avg}}</td>
+            <td>{{dur .Latency.Min}}</td>
+            <td>{{dur .Latency.Max}}</td>
+            <td>{{.Latency.Samples}}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
     <p class="muted" style="font-size:.74rem;margin:10px 0 0">
       Percentiles calculés sur les {{.Latency.Samples}} dernières requêtes mesurées (fenêtre glissante).
     </p>

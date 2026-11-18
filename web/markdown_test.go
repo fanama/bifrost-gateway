@@ -30,6 +30,13 @@ func TestRenderMarkdownDropsRawHTML(t *testing.T) {
 	}
 }
 
+func TestRenderMarkdownKeepsMermaidFence(t *testing.T) {
+	got := string(renderMarkdown("```mermaid\ngraph TD\n  A-->B\n```"))
+	if !strings.Contains(got, `class="language-mermaid"`) {
+		t.Fatalf("the mermaid fence must keep its language class for the client renderer:\n%s", got)
+	}
+}
+
 func TestRenderMarkdownEmptySource(t *testing.T) {
 	if got := renderMarkdown("  \n"); got != "" {
 		t.Fatalf("expected empty output, got %q", got)

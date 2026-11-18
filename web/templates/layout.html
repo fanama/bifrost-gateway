@@ -20,6 +20,8 @@
   --font-mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
 }
 *{box-sizing:border-box}
+.skip-link{position:fixed;left:12px;top:-64px;z-index:200;padding:9px 14px;border-radius:var(--radius);background:var(--accent-strong);color:#fff;font-size:.85rem;font-weight:600}
+.skip-link:focus{top:10px;color:#fff;text-decoration:none}
 body{margin:0;font-family:var(--font-sans);font-size:15px;line-height:1.55;background:var(--bg);color:var(--text);display:flex;min-height:100vh;-webkit-font-smoothing:antialiased}
 a{color:var(--accent);text-decoration:none;text-underline-offset:3px}
 a:hover{color:var(--accent-hover)}
@@ -73,7 +75,8 @@ input:hover,select:hover,textarea:hover{border-color:var(--line-strong)}
 input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);box-shadow:var(--ring)}
 ::placeholder{color:#8693a4}
 textarea{resize:vertical;line-height:1.55}
-input[type="checkbox"],input[type="radio"]{width:auto;margin:0;padding:0;accent-color:var(--accent);cursor:pointer;box-shadow:none}
+input[type="checkbox"],input[type="radio"]{width:16px;height:16px;flex-shrink:0;margin:0;padding:0;accent-color:var(--accent);cursor:pointer;box-shadow:none}
+input[type="checkbox"]:focus-visible,input[type="radio"]:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 input[type="file"]{padding:7px 8px;font-size:.82rem;color:var(--muted)}
 input[type="file"]::file-selector-button{margin-right:10px;padding:5px 10px;border-radius:var(--radius-sm);border:1px solid var(--line-strong);background:var(--panel);color:var(--text);font:inherit;font-size:.8rem;cursor:pointer;transition:border-color var(--ease),color var(--ease)}
 input[type="file"]::file-selector-button:hover{border-color:var(--accent);color:var(--accent)}
@@ -134,11 +137,16 @@ tbody tr:last-child td{border-bottom:none}
 .meter-fill.meter-ok{background:var(--ok)}
 
 /* ---- Chat Modern UI ---- */
-.page-chat-container{display:flex;flex-direction:column;height:calc(100vh - 36px);max-width:960px;margin:0 auto;width:100%;padding:20px 32px 16px}
-.chat-topbar{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:12px 16px;background:var(--panel);border:1px solid var(--line);border-radius:12px;margin-bottom:12px;flex-shrink:0}
-.chat-topbar-left{display:flex;align-items:center;gap:10px;flex:1}
+.page-chat-container{display:flex;flex-direction:column;height:calc(100vh - 36px);height:calc(100dvh - 36px);max-width:960px;margin:0 auto;width:100%;padding:20px 32px 16px}
+.chat-topbar{display:flex;align-items:center;flex-wrap:wrap;gap:10px 14px;padding:12px 16px;background:var(--panel);border:1px solid var(--line);border-radius:12px;margin-bottom:12px;flex-shrink:0}
+.chat-topbar-left{display:flex;align-items:center;gap:8px;min-width:0}
+#chat-config-selector{flex:1 1 260px}
 .chat-topbar-left label{font-size:.78rem;font-weight:600;color:var(--muted);margin:0;white-space:nowrap}
 .chat-topbar select{margin:0;max-width:420px;padding:7px 12px;font-size:.85rem}
+.chat-topbar .actions{margin-left:auto}
+.chat-toggle{display:inline-flex;align-items:center;gap:8px;min-height:36px;margin:0;padding:0 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel2);color:var(--muted);font-size:.8rem;font-weight:600;white-space:nowrap;cursor:pointer;user-select:none;transition:border-color var(--ease),background-color var(--ease),color var(--ease)}
+.chat-toggle:hover{border-color:var(--line-strong);color:var(--text)}
+.chat-toggle:has(input:checked){border-color:var(--accent);background:rgba(79,140,255,.14);color:var(--text)}
 .chat-box{display:flex;flex-direction:column;flex:1;min-height:0;background:var(--panel);border:1px solid var(--line);border-radius:16px;overflow:hidden}
 .chat-messages-container{flex:1;overflow-y:auto;padding:20px;display:flex;flex-direction:column;gap:18px;scroll-behavior:smooth}
 .chat-message{display:flex;gap:12px;align-items:flex-start;max-width:85%}
@@ -172,7 +180,8 @@ tbody tr:last-child td{border-bottom:none}
 .chat-message .bubble hr{margin:10px 0}
 
 .chat-empty-state{margin:auto;text-align:center;max-width:440px;padding:40px 20px;color:var(--muted)}
-.chat-empty-icon{font-size:2.4rem;margin-bottom:12px;display:inline-block;opacity:.8}
+.chat-empty-icon{margin-bottom:12px;display:inline-flex;color:var(--muted);opacity:.9}
+.chat-empty-icon svg{width:42px;height:42px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
 .chat-empty-title{font-size:1.15rem;font-weight:600;color:var(--text);margin-bottom:6px}
 .chat-empty-desc{font-size:.85rem;line-height:1.5}
 
@@ -256,15 +265,24 @@ tbody tr:last-child td{border-bottom:none}
 .chat-textarea:focus-visible{outline:none;box-shadow:none}
 .chat-served-model{font-size:.74rem;color:var(--muted);padding:6px 4px 0}
 .chat-rag-sources{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:6px 4px 0}
+.chat-rag-label{font-size:.72rem;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+.chat-mermaid{margin:10px 0;padding:12px;border:1px solid var(--line);border-radius:10px;background:rgba(0,0,0,.22);overflow-x:auto}
+.chat-mermaid svg{display:block;max-width:100%;height:auto;margin:0 auto}
+.chat-mermaid-error{margin:6px 0 0;font-size:.75rem;color:var(--warn)}
+.chat-message-actions{display:flex;flex-wrap:wrap;gap:6px;padding:6px 4px 0}
+.chat-action{font:inherit;font-size:.72rem;font-weight:600;line-height:1.2;min-height:26px;padding:3px 8px;border-radius:6px;border:1px solid var(--line);background:transparent;color:var(--muted);cursor:pointer;transition:color var(--ease),background-color var(--ease),border-color var(--ease)}
+.chat-action:hover{color:var(--text);background:var(--panel2);border-color:var(--line-strong)}
+.chat-action:disabled{opacity:.7;cursor:default}
+.chat-mermaid-toolbar{display:flex;justify-content:flex-end;margin-top:6px}
 .chat-served-model .hint{font-size:.72rem}
 @media (max-width:860px){
   body{flex-direction:column}
   .sidebar{width:100%;height:auto;position:sticky;top:0;z-index:20;flex-direction:row;align-items:center;overflow-x:auto;gap:2px;padding:8px 10px;border-right:none;border-bottom:1px solid var(--line)}
   .brand{margin:0 10px 0 2px;white-space:nowrap;font-size:.95rem}
-  .sidebar a{padding:6px 10px;font-size:.82rem;white-space:nowrap;border-left:none;border-bottom:2px solid transparent;border-radius:var(--radius) var(--radius) 0 0}
+  .sidebar a{display:flex;align-items:center;min-height:44px;padding:6px 10px;font-size:.82rem;white-space:nowrap;border-left:none;border-bottom:2px solid transparent;border-radius:var(--radius) var(--radius) 0 0}
   .sidebar a.active{background:transparent;border-bottom-color:var(--accent)}
   main{padding:20px 16px 40px}
-  .page-chat-container{height:calc(100vh - 92px);padding:14px 16px 12px}
+  .page-chat-container{height:calc(100vh - 92px);height:calc(100dvh - 92px);padding:14px 16px 12px}
   .grid2{grid-template-columns:1fr}
   .chat-message{max-width:92%}
   .log-head{flex-direction:column}
@@ -276,8 +294,10 @@ tbody tr:last-child td{border-bottom:none}
   .actions{flex-wrap:wrap}
   .stat-value{font-size:1.3rem}
   dialog{padding:16px;width:96vw}
-  .chat-topbar{flex-wrap:wrap}
   .chat-topbar select{max-width:none}
+  .chat-toggle{min-height:44px}
+  .btn.small{min-height:34px;padding:6px 10px}
+  input,select,textarea,.chat-textarea,.chat-topbar select{font-size:16px}
 }
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important;scroll-behavior:auto!important}
@@ -287,16 +307,17 @@ tbody tr:last-child td{border-bottom:none}
 {{end}}
 
 {{define "nav"}}
-<aside class="sidebar">
+<a class="skip-link" href="#main">Aller au contenu</a>
+<nav class="sidebar" aria-label="Navigation principale">
   <div class="brand">Bridge<span>Gateway</span></div>
-  <a href="/" {{if eq .Active "chat"}}class="active"{{end}}>Discussion</a>
-  <a href="/embeddings-test" {{if eq .Active "embeddings"}}class="active"{{end}}>Embeddings</a>
-  <a href="/rag" {{if eq .Active "rag"}}class="active"{{end}}>RAG</a>
-  <a href="/providers" {{if eq .Active "providers"}}class="active"{{end}}>Providers</a>
-  <a href="/models" {{if eq .Active "models"}}class="active"{{end}}>Modeles</a>
-  <a href="/projects" {{if eq .Active "configs"}}class="active"{{end}}>Projets</a>
-  <a href="/monitoring" {{if eq .Active "monitoring"}}class="active"{{end}}>Monitoring</a>
-</aside>
+  <a href="/" {{if eq .Active "chat"}}class="active" aria-current="page"{{end}}>Discussion</a>
+  <a href="/embeddings-test" {{if eq .Active "embeddings"}}class="active" aria-current="page"{{end}}>Embeddings</a>
+  <a href="/rag" {{if eq .Active "rag"}}class="active" aria-current="page"{{end}}>RAG</a>
+  <a href="/providers" {{if eq .Active "providers"}}class="active" aria-current="page"{{end}}>Providers</a>
+  <a href="/models" {{if eq .Active "models"}}class="active" aria-current="page"{{end}}>Modèles</a>
+  <a href="/projects" {{if eq .Active "configs"}}class="active" aria-current="page"{{end}}>Projets</a>
+  <a href="/monitoring" {{if eq .Active "monitoring"}}class="active" aria-current="page"{{end}}>Monitoring</a>
+</nav>
 {{end}}
 
 {{define "tail"}}
@@ -585,4 +606,4 @@ tbody tr:last-child td{border-bottom:none}
 </html>
 {{end}}
 
-{{define "toast_error"}}<div class="toast error"><strong>Erreur :</strong> {{.}}</div>{{end}}
+{{define "toast_error"}}<div class="toast error" role="alert"><strong>Erreur :</strong> {{.}}</div>{{end}}

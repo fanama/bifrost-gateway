@@ -19,17 +19,17 @@
       </select>
     </div>
     {{if .HasRAG}}
-    <div class="chat-topbar-left">
-      <label for="chat-use-rag" title="Ajouter les passages du corpus du projet au prochain message">Utiliser le RAG</label>
+    <label class="chat-toggle" title="Ajouter les passages du corpus du projet au prochain message">
       <input type="checkbox" id="chat-use-rag" name="use_rag" value="1" form="chat-form">
-    </div>
+      <span>Utiliser le RAG</span>
+    </label>
     {{end}}
     <div class="actions">
       <button class="btn ghost small" type="button" onclick="resetChat()">Nouvelle discussion</button>
     </div>
   </div>
 
-  <div id="chat-error"></div>
+  <div id="chat-error" role="status" aria-live="polite"></div>
   <dialog id="config-form-zone" class="card"></dialog>
 
   <div class="chat-box">
@@ -37,7 +37,7 @@
       <div id="chat-messages">
         {{template "chat_placeholder" .}}
       </div>
-      <div id="typing-indicator" class="typing-indicator">
+      <div id="typing-indicator" class="typing-indicator" aria-hidden="true">
         <span class="typing-dot"></span>
         <span class="typing-dot"></span>
         <span class="typing-dot"></span>
@@ -45,7 +45,7 @@
     </div>
 
     <div class="chat-input-area">
-      <form id="chat-form" class="chat-input-form" hx-post="/chat/send" hx-target="#chat-messages" hx-swap="beforeend" hx-indicator="#typing-indicator">
+      <form id="chat-form" class="chat-input-form" hx-post="/chat/send" hx-target="#chat-messages" hx-swap="beforeend" hx-indicator="#typing-indicator" hx-disabled-elt="#chat-send-btn">
         <input type="hidden" name="history" id="chat-history" value="">
         <div class="chat-input-row">
           <textarea
@@ -53,6 +53,8 @@
             id="chat-message"
             class="chat-textarea"
             placeholder="Posez votre question… (Entrée pour envoyer)"
+            aria-label="Votre message"
+            enterkeyhint="send"
             rows="1"
             required
             oninput="autoResize(this)"
@@ -77,9 +79,12 @@ function autoResize(textarea) {
 }
 
 function handleKey(evt) {
+  // Ne pas envoyer pendant une composition IME (accents, langues asiatiques).
+  if (evt.isComposing || evt.keyCode === 229) return;
   if (evt.key === 'Enter' && !evt.shiftKey) {
     evt.preventDefault();
     var form = document.getElementById('chat-form');
+    if (form.classList.contains('htmx-request')) return;
     var msg = document.getElementById('chat-message').value.trim();
     if (msg.length > 0) {
       htmx.trigger(form, 'submit');
@@ -173,7 +178,13 @@ function persistConversation() {
   var container = document.getElementById('chat-messages');
   if (!container) return;
   try {
-    localStorage.setItem('chat_conversation_html', container.innerHTML);
+    // On ne sauvegarde pas les boutons : ils sont recréés au chargement avec
+    // leurs ecouteurs, et le SVG reste le seul contenu lourd conserve.
+    var snapshot = container.cloneNode(true);
+    snapshot.querySelectorAll('.chat-message-actions,.chat-mermaid-toolbar').forEach(function (node) {
+      node.remove();
+    });
+    localStorage.setItem('chat_conversation_html', snapshot.innerHTML);
     localStorage.removeItem('chat_history_messages');
   } catch (e) {}
 }
@@ -182,8 +193,223 @@ document.addEventListener('htmx:beforeRequest', function(evt) {
   var el = evt.detail.elt;
   if (el && el.id === 'chat-form') {
     document.getElementById('chat-history').value = JSON.stringify(collectHistory());
+    var btn = document.getElementById('chat-send-btn');
+    if (btn) btn.setAttribute('aria-busy', 'true');
   }
 });
+
+document.addEventListener('htmx:afterRequest', function(evt) {
+  var el = evt.detail.elt;
+  if (el && el.id === 'chat-form') {
+    var btn = document.getElementById('chat-send-btn');
+    if (btn) btn.removeAttribute('aria-busy');
+  }
+});
+
+// Les blocs ```mermaid des reponses sont convertis en SVG dans la bulle.
+// La bibliotheque est chargee a la demande depuis /static et une seule fois
+// par page ; en cas d'erreur de syntaxe, le code source reste affiche.
+var mermaidPromise = null;
+var mermaidRun = Math.random().toString(36).slice(2, 8);
+var mermaidCount = 0;
+
+function initMermaid() {
+  if (window.__chatMermaidInitialized || !window.mermaid) return;
+  window.__chatMermaidInitialized = true;
+  window.mermaid.initialize({
+    startOnLoad: false,
+    securityLevel: 'strict',
+    suppressErrorRendering: true,
+    theme: 'dark',
+    fontFamily: getComputedStyle(document.body).fontFamily,
+    flowchart: { htmlLabels: false, curve: 'basis' },
+    themeVariables: {
+      background: '#1e242c',
+      primaryColor: '#243044',
+      primaryTextColor: '#e6edf3',
+      primaryBorderColor: '#3a4452',
+      secondaryColor: '#1b2533',
+      tertiaryColor: '#151b23',
+      lineColor: '#94a3b8',
+      textColor: '#e6edf3',
+      mainBkg: '#243044',
+      nodeBorder: '#3a4452',
+      clusterBkg: '#171c22',
+      clusterBorder: '#2a323d',
+      edgeLabelBackground: '#171c22'
+    }
+  });
+}
+
+function loadMermaid() {
+  if (window.mermaid) {
+    initMermaid();
+    return Promise.resolve(window.mermaid);
+  }
+  if (mermaidPromise) return mermaidPromise;
+  mermaidPromise = new Promise(function (resolve, reject) {
+    var script = document.createElement('script');
+    script.src = '/static/mermaid.min.js';
+    script.async = true;
+    script.onload = function () {
+      if (!window.mermaid) {
+        reject(new Error('Mermaid indisponible'));
+        return;
+      }
+      initMermaid();
+      resolve(window.mermaid);
+    };
+    script.onerror = function () { reject(new Error('Mermaid introuvable')); };
+    document.head.appendChild(script);
+  });
+  return mermaidPromise;
+}
+
+function renderMermaidBlocks(root) {
+  var scope = root || document;
+  var codes = scope.querySelectorAll('pre > code.language-mermaid:not([data-mermaid])');
+  if (!codes.length) return;
+  codes.forEach(function (code) { code.setAttribute('data-mermaid', 'pending'); });
+  loadMermaid().then(function (mermaid) {
+    codes.forEach(function (code) {
+      var pre = code.parentElement;
+      var source = code.textContent.trim();
+      if (!pre || !source) return;
+      var id = 'chat-mermaid-' + mermaidRun + '-' + (++mermaidCount);
+      mermaid.render(id, source).then(function (result) {
+        var figure = document.createElement('div');
+        figure.className = 'chat-mermaid';
+        figure.setAttribute('role', 'group');
+        figure.setAttribute('aria-label', 'Diagramme Mermaid');
+        figure.innerHTML = result.svg;
+        pre.replaceWith(figure);
+        figure.dataset.mermaidIndex = String(mermaidCount);
+        if (typeof result.bindFunctions === 'function') result.bindFunctions(figure);
+        code.setAttribute('data-mermaid', 'done');
+        enhanceMermaidFigures(figure.parentElement || document);
+        scrollToBottom();
+      }).catch(function () {
+        code.setAttribute('data-mermaid', 'error');
+        var note = document.createElement('div');
+        note.className = 'chat-mermaid-error';
+        note.textContent = 'Diagramme Mermaid invalide : le code source reste affiché.';
+        pre.after(note);
+      });
+    });
+  }).catch(function () {
+    // Bibliotheque indisponible : on laisse le code source et on autorise un
+    // nouvel essai au prochain echange.
+    codes.forEach(function (code) { code.removeAttribute('data-mermaid'); });
+  });
+}
+
+function chatActionButton(label, handler, className) {
+  var button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'chat-action' + (className ? ' ' + className : '');
+  button.textContent = label;
+  button.addEventListener('click', handler);
+  return button;
+}
+
+function chatCopyText(text, done) {
+  var fallback = function () { chatFallbackCopy(text, done); };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(done, fallback);
+  } else {
+    fallback();
+  }
+}
+
+function chatFallbackCopy(text, done) {
+  var area = document.createElement('textarea');
+  area.value = text;
+  area.setAttribute('readonly', '');
+  area.style.position = 'fixed';
+  area.style.left = '-9999px';
+  document.body.appendChild(area);
+  area.select();
+  var ok = false;
+  try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+  document.body.removeChild(area);
+  if (ok) { done(); } else { alert('Copie impossible : sélectionnez le texte manuellement.'); }
+}
+
+function copyMessageMarkdown(button) {
+  var message = button.closest('.chat-message');
+  if (!message) return;
+  var original = button.textContent;
+  chatCopyText(message.dataset.content || '', function () {
+    button.textContent = 'Copié !';
+    button.disabled = true;
+    setTimeout(function () {
+      button.textContent = original;
+      button.disabled = false;
+    }, 1600);
+  });
+}
+
+function enhanceChatMessages(root) {
+  var scope = root || document;
+  scope.querySelectorAll('.chat-message[data-role="assistant"]').forEach(function (message) {
+    var wrap = message.querySelector('.chat-content-wrap');
+    if (!wrap) return;
+    // Les boutons restaures depuis localStorage n'ont pas d'ecouteurs : on les
+    // remplace systematiquement par une version vive.
+    var previous = wrap.querySelector('.chat-message-actions');
+    if (previous) previous.remove();
+    var actions = document.createElement('div');
+    actions.className = 'chat-message-actions';
+    var button = chatActionButton('Copier le markdown', function () {
+      copyMessageMarkdown(this);
+    }, 'chat-copy-markdown');
+    button.setAttribute('aria-label', 'Copier le markdown de cette réponse');
+    actions.appendChild(button);
+    wrap.appendChild(actions);
+  });
+}
+
+function downloadMermaidSvg(button) {
+  var figure = button.closest('.chat-mermaid');
+  var svg = figure ? figure.querySelector('svg') : null;
+  if (!svg) return;
+  var clone = svg.cloneNode(true);
+  clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+  var markup = '<?xml version="1.0" encoding="UTF-8"?>\n' + new XMLSerializer().serializeToString(clone);
+  var blob = new Blob([markup], { type: 'image/svg+xml;charset=utf-8' });
+  var url = URL.createObjectURL(blob);
+  var link = document.createElement('a');
+  link.href = url;
+  link.download = 'diagramme-mermaid-' + (figure.dataset.mermaidIndex || '1') + '.svg';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+}
+
+function enhanceMermaidFigures(root) {
+  var scope = root || document;
+  scope.querySelectorAll('.chat-mermaid').forEach(function (figure, index) {
+    if (!figure.dataset.mermaidIndex) figure.dataset.mermaidIndex = String(index + 1);
+    var previous = figure.querySelector('.chat-mermaid-toolbar');
+    if (previous) previous.remove();
+    var toolbar = document.createElement('div');
+    toolbar.className = 'chat-mermaid-toolbar';
+    var button = chatActionButton('Télécharger le SVG', function () {
+      downloadMermaidSvg(this);
+    }, 'chat-download-svg');
+    button.setAttribute('aria-label', 'Télécharger ce diagramme au format SVG');
+    button.title = 'Télécharger le diagramme en SVG';
+    toolbar.appendChild(button);
+    figure.appendChild(toolbar);
+  });
+}
+
+function enhanceChat(root) {
+  enhanceChatMessages(root);
+  enhanceMermaidFigures(root);
+  renderMermaidBlocks(root);
+}
 
 function openChatConfigEdit() {
   var select = document.getElementById('chat-config-select');
@@ -214,6 +440,7 @@ document.addEventListener('htmx:afterSwap', function(evt) {
       textarea.style.height = '24px';
       textarea.focus();
     }
+    enhanceChat(evt.detail.target);
     persistConversation();
     scrollToBottom();
   }
@@ -238,9 +465,16 @@ document.addEventListener('htmx:afterSwap', function(evt) {
     var container = document.getElementById('chat-messages');
     if (!container || container.querySelector('.chat-message')) return;
     container.innerHTML = saved;
+    enhanceChat(container);
     scrollToBottom();
   } catch (e) {}
 })();
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', function () { enhanceChat(document); });
+} else {
+  enhanceChat(document);
+}
 
 </script>
 {{template "tail" .}}
@@ -248,7 +482,9 @@ document.addEventListener('htmx:afterSwap', function(evt) {
 
 {{define "chat_placeholder"}}
 <div class="chat-empty-state">
-  <div class="chat-empty-icon">&#128172;</div>
+  <div class="chat-empty-icon" aria-hidden="true">
+    <svg viewBox="0 0 24 24"><path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+  </div>
   <div class="chat-empty-title">Discussion Interactive</div>
   <div class="chat-empty-desc">Sélectionnez une configuration en haut puis tapez votre question ci-dessous pour démarrer l'échange.</div>
 
@@ -298,8 +534,8 @@ document.addEventListener('htmx:afterSwap', function(evt) {
 <div class="chat-served-model">{{if .ServedModel}}Réponse produite par <strong>{{.ServedModel}}</strong>{{if ne .ServedModel .RequestedModel}} <span class="hint">(routage automatique ; configuration sélectionnée : {{.RequestedModel}})</span>{{end}} &bull; {{end}}Raisonnement : <strong>{{if .ReasoningEffort}}{{reasoningLabel .ReasoningEffort}}{{else}}défaut du modèle{{end}}</strong></div>
 {{end}}
 {{if .RAGUsed}}
-<div class="chat-rag-sources">
-  <span class="badge">RAG</span>
+<div class="chat-rag-sources" role="group" aria-label="Sources RAG">
+  <span class="chat-rag-label">Sources RAG</span>
   {{range .Sources}}<span class="badge">{{.FileName}} · #{{.ChunkIndex}}</span>{{else}}<span class="muted hint">aucun passage trouvé</span>{{end}}
 </div>
 {{end}}

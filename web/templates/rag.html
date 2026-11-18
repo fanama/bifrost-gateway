@@ -96,7 +96,7 @@
 {{end}}
 
 {{define "rag_settings_form"}}
-{{if .Saved}}<div class="toast ok">Paramètres enregistrés.</div>{{end}}
+{{if .Saved}}<div class="toast ok" role="status">Paramètres enregistrés.</div>{{end}}
 <div class="card">
   <div class="meta-row" style="margin-bottom:14px">
     <span class="badge">extraction auto</span>
@@ -218,7 +218,7 @@
 {{end}}
 
 {{define "rag_documents_body"}}
-{{if .Message}}<div class="toast ok">{{.Message}}</div>{{end}}
+{{if .Message}}<div class="toast ok" role="status">{{.Message}}</div>{{end}}
 <div class="table-wrap">
   <table>
     <thead><tr><th>Fichier</th><th>Passages</th><th>Modèle</th><th>Taille</th><th>Indexé le</th><th></th></tr></thead>

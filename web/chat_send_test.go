@@ -183,7 +183,7 @@ func TestChatSendUsesRAGWhenChecked(t *testing.T) {
 		t.Fatalf("grounded prompt leaked into the conversation: %s", body)
 	}
 	// Les sources du corpus sont affichees avec la reponse.
-	if !strings.Contains(body, "notes.txt") || !strings.Contains(body, `class="badge">RAG</span>`) {
+	if !strings.Contains(body, "notes.txt") || !strings.Contains(body, "Sources RAG") {
 		t.Fatalf("RAG sources missing from the reply: %s", body)
 	}
 }
