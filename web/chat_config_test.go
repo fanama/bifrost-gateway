@@ -107,6 +107,9 @@ func TestChatConfigEditFlow(t *testing.T) {
 	if !strings.Contains(bodyEdit, `Tu es un assistant utile`) {
 		t.Fatalf("expected system prompt prefilled, got: %s", bodyEdit)
 	}
+	if !strings.Contains(bodyEdit, `name="use_rag"`) {
+		t.Fatalf("expected use_rag checkbox in the configuration form, got: %s", bodyEdit)
+	}
 
 	// 3. POST /chat/configs/{cid} - updates the config and returns updated selector
 	form := url.Values{}
@@ -115,6 +118,7 @@ func TestChatConfigEditFlow(t *testing.T) {
 	form.Set("model", "mistral-small")
 	form.Set("system_prompt", "Nouveau prompt")
 	form.Set("temperature", "0.5")
+	form.Set("use_rag", "1")
 
 	reqUpdate := httptest.NewRequest("POST", "/chat/configs/"+cfg.ID, strings.NewReader(form.Encode()))
 	reqUpdate.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -148,5 +152,8 @@ func TestChatConfigEditFlow(t *testing.T) {
 	}
 	if updatedCfg.Temperature == nil || *updatedCfg.Temperature != 0.5 {
 		t.Fatalf("expected temperature 0.5, got %v", updatedCfg.Temperature)
+	}
+	if !updatedCfg.UseRAG {
+		t.Fatal("expected use_rag to be persisted as a boolean")
 	}
 }

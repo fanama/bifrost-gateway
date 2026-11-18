@@ -79,6 +79,7 @@ func (u *ConfigUseCase) Update(ctx context.Context, id string, patch *domain.Cha
 	// Le schema suit le format : changer l'un sans l'autre laisserait une
 	// configuration dont le format annonce json_schema sans schema derriere.
 	existing.ResponseSchema = patch.ResponseSchema
+	existing.UseRAG = patch.UseRAG
 	existing.UpdatedAt = u.now().UTC()
 
 	if err := u.repo.Update(ctx, existing); err != nil {

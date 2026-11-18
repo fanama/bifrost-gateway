@@ -30,6 +30,7 @@ func parseConfigForm(r *http.Request, providers []string) *domain.ChatConfig {
 		PresencePenalty:  parseFloatOpt(r.FormValue("presence_penalty")),
 		ResponseFormat:   strings.TrimSpace(r.FormValue("response_format")),
 		ResponseSchema:   strings.TrimSpace(r.FormValue("response_schema")),
+		UseRAG:           checkboxValue(r, "use_rag"),
 	}
 }
 
@@ -117,6 +118,17 @@ func parseFloatOpt(raw string) *float64 {
 		return nil
 	}
 	return &v
+}
+
+// checkboxValue lit une case a cocher HTML : absente du formulaire, elle vaut
+// false ; sinon la valeur envoyee ("1", "true", "on") vaut true.
+func checkboxValue(r *http.Request, name string) bool {
+	switch strings.ToLower(strings.TrimSpace(r.FormValue(name))) {
+	case "1", "true", "on", "yes":
+		return true
+	default:
+		return false
+	}
 }
 
 func parseIntOpt(raw string) *int {

@@ -157,6 +157,12 @@
               hx-target="#cfg-fallback-rows" hx-swap="beforeend">+ Ajouter un repli</button>
     </div>
 
+    <label style="display:flex;align-items:center;gap:8px;margin-top:14px">
+      <input type="checkbox" id="cfg-use-rag" name="use_rag" value="1" aria-describedby="cfg-use-rag-hint" {{if not .IsCreate}}{{if .Editing.UseRAG}}checked{{end}}{{end}}>
+      <span>Activer le RAG</span>
+    </label>
+    <p class="note" id="cfg-use-rag-hint">Ajoute les passages du corpus du projet au prompt envoyé à chaque message de la discussion.</p>
+
     <details class="gen-params" {{if not .IsCreate}}open{{end}}>
       <summary>Parametres de generation</summary>
       <div class="grid2">
@@ -223,7 +229,7 @@
                   <td class="center"><input type="checkbox" name="schema_field_required[]" value="{{.Index}}" data-role="required" {{if .Required}}checked{{end}}></td>
                   <td class="center">
                     <details class="schema-constraints-dropdown">
-                      <summary title="Contraintes avancées (Enum, Min, Max, Regex...)">⚙</summary>
+                      <summary title="Contraintes avancées (Enum, Min, Max, Regex...)" aria-label="Contraintes avancées"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" focusable="false" aria-hidden="true"><line x1="21" x2="14" y1="4" y2="4"/><line x1="10" x2="3" y1="4" y2="4"/><line x1="21" x2="12" y1="12" y2="12"/><line x1="8" x2="3" y1="12" y2="12"/><line x1="21" x2="16" y1="20" y2="20"/><line x1="12" x2="3" y1="20" y2="20"/><line x1="14" x2="14" y1="2" y2="6"/><line x1="8" x2="8" y1="10" y2="14"/><line x1="16" x2="16" y1="18" y2="22"/></svg></summary>
                       <div class="schema-constraints-panel">
                         <label>Valeurs possibles (enum)
                           <input name="schema_field_enum[]" value="{{.Enum}}" placeholder="a, b, c">
@@ -267,7 +273,7 @@
               <td class="center"><input type="checkbox" name="schema_field_required[]" data-role="required"></td>
               <td class="center">
                 <details class="schema-constraints-dropdown">
-                  <summary title="Contraintes avancées (Enum, Min, Max, Regex...)">⚙</summary>
+                  <summary title="Contraintes avancées (Enum, Min, Max, Regex...)" aria-label="Contraintes avancées"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" focusable="false" aria-hidden="true"><line x1="21" x2="14" y1="4" y2="4"/><line x1="10" x2="3" y1="4" y2="4"/><line x1="21" x2="12" y1="12" y2="12"/><line x1="8" x2="3" y1="12" y2="12"/><line x1="21" x2="16" y1="20" y2="20"/><line x1="12" x2="3" y1="20" y2="20"/><line x1="14" x2="14" y1="2" y2="6"/><line x1="8" x2="8" y1="10" y2="14"/><line x1="16" x2="16" y1="18" y2="22"/></svg></summary>
                   <div class="schema-constraints-panel">
                     <label>Valeurs possibles (enum)
                       <input name="schema_field_enum[]" placeholder="a, b, c">

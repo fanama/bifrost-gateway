@@ -46,7 +46,6 @@ func (s *chatController) pageChat(w http.ResponseWriter, r *http.Request) {
 		"HasActive":    hasActive,
 		"BaseURL":      chatAPIBaseURL(r),
 		"DefaultModel": defaultModel,
-		"HasRAG":       s.rag != nil,
 	})
 }
 
@@ -127,8 +126,7 @@ func (s *chatController) chatSend(w http.ResponseWriter, r *http.Request) {
 
 	cfgID := r.FormValue("config_id")
 	message := strings.TrimSpace(r.FormValue("message"))
-	useRAG := ragRequested(r)
-	prompt, sources, err := s.chatPrompt(r, cfgID, message)
+	prompt, sources, useRAG, err := s.chatPrompt(r, cfgID, message)
 	if err != nil {
 		s.renderToast(w, "#chat-error", err.Error())
 		return

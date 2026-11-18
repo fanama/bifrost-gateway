@@ -36,10 +36,14 @@ type ChatConfig struct {
 	// ResponseSchema porte le JSON Schema impose au modele lorsque
 	// ResponseFormat vaut "json_schema". Il est stocke en clair : c'est ce que le
 	// provider attend, et il doit etre relu sans reinterpretation.
-	ResponseSchema string    `json:"response_schema,omitempty"`
-	Active         bool      `json:"active"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	ResponseSchema string `json:"response_schema,omitempty"`
+	// UseRAG active la recuperation dans le corpus du projet avant chaque
+	// message de la discussion. C'est un booleen persiste avec la configuration
+	// du projet, pas une option par message.
+	UseRAG    bool      `json:"use_rag"`
+	Active    bool      `json:"active"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 func (c *ChatConfig) Validate() error {
