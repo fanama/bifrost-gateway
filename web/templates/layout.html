@@ -55,6 +55,9 @@ p{margin:6px 0}
 .muted{color:var(--muted)}
 .center{text-align:center}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.rag-layout{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,.9fr);gap:16px;align-items:start}
+.rag-col-title{font-size:.85rem;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin:0 0 10px}
+@media (max-width:1080px){.rag-layout{grid-template-columns:1fr}}
 .fallback-chain{margin-bottom:14px}
 .fallback-chain label{margin-bottom:6px}
 .fallback-chain .hint{display:block;font-size:.75rem;line-height:1.45}
@@ -88,6 +91,8 @@ input[type="file"]::file-selector-button:hover{border-color:var(--accent);color:
 .btn.danger{border-color:#b91c1c;background:#b91c1c}
 .btn.danger:hover{background:var(--danger);border-color:var(--danger)}
 .actions{display:flex;gap:6px}
+.link-btn{background:none;border:none;padding:0;margin:0;color:var(--accent);font:inherit;font-size:.85rem;font-weight:600;text-align:left;cursor:pointer}
+.link-btn:hover{color:var(--accent-hover);text-decoration:underline}
 table{width:100%;border-collapse:collapse;font-size:.85rem;font-variant-numeric:tabular-nums}
 th,td{padding:9px 12px;text-align:left;border-bottom:1px solid var(--line);vertical-align:middle}
 th{color:var(--muted);font-weight:600;font-size:.72rem;text-transform:uppercase;letter-spacing:.06em}
@@ -145,11 +150,26 @@ tbody tr:last-child td{border-bottom:none}
 .chat-content-wrap{display:flex;flex-direction:column;gap:4px;min-width:0}
 .chat-sender{font-size:.72rem;color:var(--muted);font-weight:600;padding:0 4px}
 .chat-message.user .chat-sender{text-align:right}
-.chat-message .bubble{padding:11px 15px;border-radius:var(--radius-lg);line-height:1.6;font-size:.9rem;white-space:pre-wrap;word-break:break-word}
+.chat-message .bubble{padding:11px 15px;border-radius:var(--radius-lg);line-height:1.6;font-size:.9rem;white-space:normal;word-break:break-word}
 .chat-message.user .bubble{background:var(--accent-strong);color:#fff;border-bottom-right-radius:4px}
 .chat-message.assistant .bubble{background:var(--panel2);border:1px solid var(--line);color:var(--text);border-bottom-left-radius:4px}
 .chat-message .bubble pre{background:rgba(0,0,0,.35);padding:10px 12px;border-radius:8px;overflow-x:auto;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.82rem;margin:8px 0}
 .chat-message .bubble code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:rgba(0,0,0,.25);padding:2px 5px;border-radius:4px;font-size:.85em}
+/* Markdown rendu dans les bulles : le texte brut venait de white-space:pre-wrap. */
+.chat-message .bubble>*:first-child{margin-top:0}
+.chat-message .bubble>*:last-child{margin-bottom:0}
+.chat-message .bubble p{margin:0 0 8px}
+.chat-message .bubble ul,.chat-message .bubble ol{margin:6px 0 8px;padding-left:22px}
+.chat-message .bubble li{margin:2px 0}
+.chat-message .bubble h1,.chat-message .bubble h2,.chat-message .bubble h3,.chat-message .bubble h4{margin:10px 0 6px;font-size:1rem;letter-spacing:0}
+.chat-message .bubble blockquote{margin:8px 0;padding:2px 0 2px 10px;border-left:3px solid var(--line-strong);color:var(--muted)}
+.chat-message.user .bubble blockquote{border-left-color:rgba(255,255,255,.5);color:rgba(255,255,255,.85)}
+.chat-message .bubble pre{white-space:pre}
+.chat-message .bubble table{display:block;overflow-x:auto;border-collapse:collapse;margin:8px 0;font-size:.85rem}
+.chat-message .bubble th,.chat-message .bubble td{border:1px solid var(--line);padding:5px 8px;text-align:left}
+.chat-message .bubble a{text-decoration:underline}
+.chat-message.user .bubble a{color:#fff}
+.chat-message .bubble hr{margin:10px 0}
 
 .chat-empty-state{margin:auto;text-align:center;max-width:440px;padding:40px 20px;color:var(--muted)}
 .chat-empty-icon{font-size:2.4rem;margin-bottom:12px;display:inline-block;opacity:.8}
@@ -213,6 +233,7 @@ tbody tr:last-child td{border-bottom:none}
 
 /* ---- Monitoring: modale de logs ---- */
 .logs-dialog{width:min(1000px,96vw)}
+.doc-dialog{width:min(760px,94vw)}
 .log-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:14px}
 .log-head h2{font-size:1.05rem;margin:0 0 4px}
 .log-head p{margin:0;font-size:.78rem;line-height:1.45}
@@ -269,8 +290,7 @@ tbody tr:last-child td{border-bottom:none}
   <div class="brand">Bridge<span>Gateway</span></div>
   <a href="/" {{if eq .Active "chat"}}class="active"{{end}}>Discussion</a>
   <a href="/embeddings-test" {{if eq .Active "embeddings"}}class="active"{{end}}>Embeddings</a>
-  <a href="/rag/settings" {{if eq .Active "rag-settings"}}class="active"{{end}}>RAG Paramètres</a>
-  <a href="/rag/test" {{if eq .Active "rag-test"}}class="active"{{end}}>RAG Test</a>
+  <a href="/rag" {{if eq .Active "rag"}}class="active"{{end}}>RAG</a>
   <a href="/providers" {{if eq .Active "providers"}}class="active"{{end}}>Providers</a>
   <a href="/models" {{if eq .Active "models"}}class="active"{{end}}>Modeles</a>
   <a href="/projects" {{if eq .Active "configs"}}class="active"{{end}}>Projets</a>

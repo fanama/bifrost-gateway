@@ -91,9 +91,13 @@ func templateFuncs() template.FuncMap {
 			}
 			return strconv.Itoa(*p)
 		},
-		"dur":  formatDuration,
-		"ago":  formatAgo,
-		"barh": barHeight,
+		"dur":            formatDuration,
+		"ago":            formatAgo,
+		"barh":           barHeight,
+		"md":             renderMarkdown,
+		"chunkingLabel":  domain.RAGChunkingLabel,
+		"retrievalLabel": domain.RAGRetrievalLabel,
+		"rerankLabel":    domain.RAGRerankLabel,
 		"reasoningLabel": func(effort string) string {
 			switch effort {
 			case "none":

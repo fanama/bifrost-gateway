@@ -3,6 +3,7 @@ package rag
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -266,6 +267,40 @@ func TestSaveSettingsValidatesAndPersists(t *testing.T) {
 	}
 }
 
+func TestIngestAppliesStoredMarkdownChunking(t *testing.T) {
+	service := newSettingsService(t, &domainrag.Settings{
+		ProjectID: "p1", TopK: 1, ChunkSize: 40, ChunkOverlap: 0,
+		ChunkingMethod: domainrag.ChunkingMarkdown,
+	})
+	_, err := service.Ingest(context.Background(), "p1", "notes.md", "text/markdown",
+		[]byte("# Intro\n\nalpha beta.\n\n## Details\n\ngamma delta."), IngestOptions{})
+	if err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+	var joined string
+	for _, chunk := range service.chunks.(*fakeChunks).items["doc-1"] {
+		joined += chunk.Text + "\n"
+	}
+	if !strings.Contains(joined, "# Intro") || !strings.Contains(joined, "## Details") {
+		t.Fatalf("markdown method not applied: %q", joined)
+	}
+}
+
+func TestIngestAppliesSemanticChunking(t *testing.T) {
+	service := newSettingsService(t, &domainrag.Settings{
+		ProjectID: "p1", TopK: 1, ChunkSize: 200, ChunkOverlap: 0,
+		ChunkingMethod: domainrag.ChunkingSemantic,
+	})
+	doc, err := service.Ingest(context.Background(), "p1", "notes.txt", "text/plain",
+		[]byte("alpha one. alpha two. beta one."), IngestOptions{})
+	if err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+	if doc.ChunkCount != 2 {
+		t.Fatalf("semantic passages = %d, want 2", doc.ChunkCount)
+	}
+}
+
 func TestIngestAndQueryApplyStoredSettings(t *testing.T) {
 	service := newSettingsService(t, &domainrag.Settings{
 		ProjectID: "p1", TopK: 1, ChunkSize: 5, ChunkOverlap: 0,
@@ -289,5 +324,75 @@ func TestIngestAndQueryApplyStoredSettings(t *testing.T) {
 	}
 	if !strings.Contains(service.llm.(*fakeLLM).messages[0].Content, "Cite les sources") {
 		t.Fatalf("stored system prompt not applied: %#v", service.llm.(*fakeLLM).messages)
+	}
+}
+
+func TestHybridRetrievalFindsLexicalMatch(t *testing.T) {
+	service := newSettingsService(t, &domainrag.Settings{
+		ProjectID: "p1", TopK: 1, ChunkSize: 100, ChunkOverlap: 0,
+		RetrievalMode: domainrag.RetrievalHybrid, RetrievalCandidates: 4,
+	})
+	next := 0
+	service.ids = func() string { next++; return "doc-" + strconv.Itoa(next) }
+	ctx := context.Background()
+	for name, text := range map[string]string{
+		"alpha.txt": "alpha beta gamma",
+		"delta.txt": "delta epsilon",
+		"zeta.txt":  "the zeta-77 protocol",
+	} {
+		if _, err := service.Ingest(ctx, "p1", name, "text/plain", []byte(text), IngestOptions{}); err != nil {
+			t.Fatalf("ingest %s: %v", name, err)
+		}
+	}
+	result, err := service.Search(ctx, "p1", "zeta-77", QueryOptions{})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(result.Chunks) != 1 || !strings.Contains(result.Chunks[0].Chunk.Text, "zeta-77") {
+		t.Fatalf("lexical match lost: %#v", result.Chunks)
+	}
+}
+
+func TestDocumentChunksReturnsOwnPassages(t *testing.T) {
+	service, _, _, _ := newTestService(t)
+	next := 0
+	service.ids = func() string { next++; return "doc-" + strconv.Itoa(next) }
+	ctx := context.Background()
+	for _, item := range []struct{ name, text string }{{"a.txt", "alpha one"}, {"b.txt", "beta two"}} {
+		if _, err := service.Ingest(ctx, "p1", item.name, "text/plain", []byte(item.text), IngestOptions{}); err != nil {
+			t.Fatalf("ingest %s: %v", item.name, err)
+		}
+	}
+	doc, chunks, err := service.DocumentChunks(ctx, "p1", "doc-1")
+	if err != nil {
+		t.Fatalf("document chunks: %v", err)
+	}
+	if doc.FileName != "a.txt" || len(chunks) != 1 || !strings.Contains(chunks[0].Text, "alpha") {
+		t.Fatalf("wrong passages: doc=%#v chunks=%#v", doc, chunks)
+	}
+	if _, _, err := service.DocumentChunks(ctx, "p2", "doc-1"); err == nil {
+		t.Fatal("cross-project document read allowed")
+	}
+}
+
+func TestSearchAppliesStoredMMRRerank(t *testing.T) {
+	service := newSettingsService(t, &domainrag.Settings{
+		ProjectID: "p1", TopK: 2, ChunkSize: 100, ChunkOverlap: 0,
+		Reranker: domainrag.RerankMMR, MMRLambda: 0.5, RetrievalCandidates: 3,
+	})
+	next := 0
+	service.ids = func() string { next++; return "doc-" + strconv.Itoa(next) }
+	ctx := context.Background()
+	for _, text := range []string{"alpha one", "alpha two", "beta three"} {
+		if _, err := service.Ingest(ctx, "p1", text+".txt", "text/plain", []byte(text), IngestOptions{}); err != nil {
+			t.Fatalf("ingest: %v", err)
+		}
+	}
+	result, err := service.Search(ctx, "p1", "alpha", QueryOptions{})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(result.Chunks) != 2 {
+		t.Fatalf("top_k not applied after rerank: %#v", result.Chunks)
 	}
 }

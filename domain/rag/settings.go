@@ -41,7 +41,22 @@ type Settings struct {
 	TopK           int    `json:"top_k"`
 	ChunkSize      int    `json:"chunk_size"`
 	ChunkOverlap   int    `json:"chunk_overlap"`
-	SystemPrompt   string `json:"system_prompt,omitempty"`
+	// ChunkingMethod selects how extracted text becomes passages. Empty values
+	// on a stored record predate the choice and are filled by Normalize.
+	ChunkingMethod string `json:"chunking_method"`
+	// RetrievalMode selects the ranking strategy: dense vectors only, or a
+	// fusion of dense and lexical BM25 rankings. Empty values on a stored
+	// record predate the pipeline and are filled by Normalize.
+	RetrievalMode string `json:"retrieval_mode"`
+	// RetrievalCandidates is the pool fetched before reranking. It must be at
+	// least TopK.
+	RetrievalCandidates int `json:"retrieval_candidates"`
+	// Reranker selects the second retrieval stage. Empty or "none" keeps the
+	// retrieval order.
+	Reranker string `json:"reranker"`
+	// MMRLambda weights relevance against diversity when Reranker is "mmr".
+	MMRLambda    float64 `json:"mmr_lambda"`
+	SystemPrompt string  `json:"system_prompt,omitempty"`
 	// HNSW parameters. Zero values on a stored record predate the index and
 	// are filled by Normalize, so no migration is required.
 	HNSWM                     int       `json:"hnsw_m"`
@@ -61,6 +76,11 @@ func DefaultSettings(projectID string) Settings {
 		TopK:                      DefaultTopK,
 		ChunkSize:                 DefaultChunkSize,
 		ChunkOverlap:              DefaultChunkOverlap,
+		ChunkingMethod:            DefaultChunkingMethod,
+		RetrievalMode:             DefaultRetrievalMode,
+		RetrievalCandidates:       DefaultTopK,
+		Reranker:                  DefaultReranker,
+		MMRLambda:                 DefaultMMRLambda,
 		HNSWM:                     DefaultHNSWM,
 		HNSWEfConstruction:        DefaultHNSWEfConstruction,
 		HNSWEfSearch:              DefaultHNSWEfSearch,
@@ -74,6 +94,15 @@ func (s *Settings) Normalize() {
 	s.ProjectID = strings.TrimSpace(s.ProjectID)
 	s.EmbeddingModel = strings.TrimSpace(s.EmbeddingModel)
 	s.SystemPrompt = strings.TrimSpace(s.SystemPrompt)
+	s.ChunkingMethod = NormalizeChunkingMethod(s.ChunkingMethod)
+	s.RetrievalMode = NormalizeRetrievalMode(s.RetrievalMode)
+	if s.RetrievalCandidates <= 0 {
+		s.RetrievalCandidates = s.TopK
+	}
+	s.Reranker = NormalizeReranker(s.Reranker)
+	if s.MMRLambda == 0 {
+		s.MMRLambda = DefaultMMRLambda
+	}
 	if s.EmbeddingModel == "" {
 		s.EmbeddingModel = embedding.ModelLocalEmbedding
 	}
@@ -108,9 +137,37 @@ func (s Settings) Validate() error {
 	if s.ChunkOverlap < 0 || s.ChunkOverlap >= s.ChunkSize {
 		return &errs.ValidationError{Fields: []string{"chunk_overlap"}, Reason: "doit etre compris entre 0 et chunk_size - 1"}
 	}
+	if !ValidChunkingMethod(s.ChunkingMethod) {
+		return &errs.ValidationError{Fields: []string{"chunking_method"}, Reason: "methode inconnue"}
+	}
 	if len([]rune(s.SystemPrompt)) > MaxSystemPromptChars {
 		return &errs.ValidationError{Fields: []string{"system_prompt"}, Reason: "depasse la longueur maximale"}
 	}
+	if err := s.validatePipeline(); err != nil {
+		return err
+	}
+	return s.validateHNSW()
+}
+
+// validatePipeline checks the retrieval and rerank stages.
+func (s Settings) validatePipeline() error {
+	if !ValidRetrievalMode(s.RetrievalMode) {
+		return &errs.ValidationError{Fields: []string{"retrieval_mode"}, Reason: "mode inconnu"}
+	}
+	if s.RetrievalCandidates < s.TopK || s.RetrievalCandidates > MaxRetrievalCandidates {
+		return &errs.ValidationError{Fields: []string{"retrieval_candidates"}, Reason: "doit etre compris entre top_k et 200"}
+	}
+	if !ValidReranker(s.Reranker) {
+		return &errs.ValidationError{Fields: []string{"reranker"}, Reason: "reranker inconnu"}
+	}
+	if s.MMRLambda < MinMMRLambda || s.MMRLambda > MaxMMRLambda {
+		return &errs.ValidationError{Fields: []string{"mmr_lambda"}, Reason: "doit etre compris entre 0.1 et 1"}
+	}
+	return nil
+}
+
+// validateHNSW checks the index-shape parameters.
+func (s Settings) validateHNSW() error {
 	if s.HNSWM < MinHNSWM || s.HNSWM > MaxHNSWM {
 		return &errs.ValidationError{Fields: []string{"hnsw_m"}, Reason: "doit etre compris entre 16 et 64"}
 	}

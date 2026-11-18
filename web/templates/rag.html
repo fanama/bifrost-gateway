@@ -1,21 +1,21 @@
-{{define "page_rag_settings"}}
+{{define "page_rag"}}
 {{template "head" .}}
 <body hx-boost="true">
 {{template "nav" .}}
 <main id="main" class="page">
   <div class="page-head">
     <div>
-      <h1>RAG — Paramètres</h1>
-      <p class="muted">Ces valeurs s'appliquent à l'ingestion et aux questions du projet sélectionné. L'API peut les surcharger ponctuellement.</p>
+      <h1>RAG</h1>
+      <p class="muted">Réglez la chaîne d'ingestion et de récupération du projet, indexez un document puis posez une question : la réponse est construite uniquement à partir des passages retrouvés.</p>
     </div>
   </div>
 
-  <div id="rag-settings-error"></div>
+  <div id="rag-error"></div>
 
   {{if .Projects}}
   <div class="card">
     <label>Projet
-      <select onchange="if(this.value){window.location='/rag/settings?project_id='+encodeURIComponent(this.value)}">
+      <select onchange="if(this.value){window.location='/rag?project_id='+encodeURIComponent(this.value)}">
         {{range .Projects}}
         <option value="{{.ID}}" {{if eq .ID $.SelectedProjectID}}selected{{end}}>{{.Name}}</option>
         {{end}}
@@ -23,9 +23,67 @@
     </label>
   </div>
 
-  <section id="rag-settings-body">
-    {{template "rag_settings_form" .}}
-  </section>
+  <div class="rag-layout">
+    <div>
+      <h2 class="rag-col-title">Paramètres</h2>
+      <section id="rag-settings-body">
+        {{template "rag_settings_form" .}}
+      </section>
+    </div>
+
+    <div>
+      <h2 class="rag-col-title">Corpus et test</h2>
+
+      <div class="card">
+        <h3 class="card-title">Ajouter un document</h3>
+        <form hx-post="/rag/upload" hx-encoding="multipart/form-data" hx-target="#rag-documents" hx-swap="innerHTML" hx-indicator="#rag-upload-loading">
+          <input type="hidden" name="project_id" value="{{.SelectedProjectID}}">
+          <label>Fichier
+            <input type="file" name="file" required accept=".txt,.md,.markdown,.csv,.json,.log,.yaml,.yml,.xml,.html,.htm,.pdf,.png,.jpg,.jpeg,.webp,.gif,.bmp,.tif,.tiff">
+          </label>
+          <p class="note">Textes, PDF (couche texte) et images (OCR par le modèle de vision du projet), 25 Mo maximum.</p>
+          <button class="btn" type="submit">Indexer</button>
+          <span id="rag-upload-loading" class="htmx-indicator muted hint">Extraction et embedding…</span>
+        </form>
+      </div>
+
+      <div class="card">
+        <h3 class="card-title">Poser une question</h3>
+        <form hx-post="/rag/query" hx-target="#rag-answer" hx-swap="innerHTML" hx-indicator="#rag-query-loading">
+          <input type="hidden" name="project_id" value="{{.SelectedProjectID}}">
+          <label>Question
+            <textarea name="question" rows="3" placeholder="Que disent les documents à propos de… ?" required></textarea>
+          </label>
+          <div class="grid2">
+            <label>Mode
+              <select name="mode">
+                <option value="answer">Réponse du modèle</option>
+                <option value="search">Recherche seule</option>
+              </select>
+            </label>
+            <label>top_k (optionnel)
+              <input type="number" name="top_k" min="1" max="20" placeholder="Paramètres du projet">
+            </label>
+          </div>
+          <button class="btn" type="submit">Lancer</button>
+          <span id="rag-query-loading" class="htmx-indicator muted hint">Recherche en cours…</span>
+        </form>
+      </div>
+
+      <section class="card">
+        <h3 class="card-title">Documents indexés</h3>
+        <section id="rag-documents">
+          {{template "rag_documents_body" .}}
+        </section>
+      </section>
+
+      <dialog id="rag-document-dialog" class="card doc-dialog"></dialog>
+
+      <div id="rag-answer">
+        <div class="card center muted empty-state">La réponse et les sources apparaîtront ici.</div>
+      </div>
+    </div>
+  </div>
   {{else}}
   <div class="card center muted empty-state">
     Aucun projet. <a href="/projects">Créez un projet</a> avant de configurer le RAG.
@@ -40,6 +98,14 @@
 {{define "rag_settings_form"}}
 {{if .Saved}}<div class="toast ok">Paramètres enregistrés.</div>{{end}}
 <div class="card">
+  <div class="meta-row" style="margin-bottom:14px">
+    <span class="badge">extraction auto</span>
+    <span class="badge">chunking {{chunkingLabel .Settings.ChunkingMethod}}</span>
+    <span class="badge ok">{{.Settings.EmbeddingModel}}</span>
+    <span class="badge">retrieval {{retrievalLabel .Settings.RetrievalMode}}</span>
+    <span class="badge">rerank {{rerankLabel .Settings.Reranker}}</span>
+    <span class="badge">top_k {{.Settings.TopK}}</span>
+  </div>
   <form hx-post="/rag/settings" hx-target="#rag-settings-body" hx-swap="innerHTML">
     <input type="hidden" name="project_id" value="{{.Settings.ProjectID}}">
     <div class="grid2">
@@ -54,12 +120,48 @@
       <label>Passages envoyés au modèle (top_k)
         <input type="number" name="top_k" min="1" max="20" value="{{.Settings.TopK}}" required>
       </label>
+      <label>Méthode de chunking
+        <select name="chunking_method" required>
+          {{$method := .Settings.ChunkingMethod}}
+          {{range .ChunkingChoices}}
+          <option value="{{.Value}}" title="{{.Hint}}" {{if eq .Value $method}}selected{{end}}>{{.Label}}</option>
+          {{end}}
+        </select>
+      </label>
       <label>Taille des passages (caractères)
         <input type="number" name="chunk_size" min="1" value="{{.Settings.ChunkSize}}" required>
       </label>
       <label>Chevauchement (caractères)
         <input type="number" name="chunk_overlap" min="0" value="{{.Settings.ChunkOverlap}}" required>
       </label>
+    </div>
+    <h4 style="font-size:.85rem;margin:18px 0 8px">Pipeline de récupération</h4>
+    <div class="grid2">
+      <label>Retrieval
+        <select name="retrieval_mode" required>
+          {{$mode := .Settings.RetrievalMode}}
+          {{range .RetrievalChoices}}
+          <option value="{{.Value}}" title="{{.Hint}}" {{if eq .Value $mode}}selected{{end}}>{{.Label}}</option>
+          {{end}}
+        </select>
+      </label>
+      <label>Candidats avant rerank
+        <input type="number" name="retrieval_candidates" min="1" max="200" value="{{.Settings.RetrievalCandidates}}" required>
+      </label>
+      <label>Reranker
+        <select name="reranker" required>
+          {{$reranker := .Settings.Reranker}}
+          {{range .RerankChoices}}
+          <option value="{{.Value}}" title="{{.Hint}}" {{if eq .Value $reranker}}selected{{end}}>{{.Label}}</option>
+          {{end}}
+        </select>
+      </label>
+      <label>Lambda MMR (pertinence / diversité)
+        <input type="number" name="mmr_lambda" min="0.1" max="1" step="0.05" value="{{.Settings.MMRLambda}}" required>
+      </label>
+    </div>
+    <h4 style="font-size:.85rem;margin:18px 0 8px">Index HNSW</h4>
+    <div class="grid2">
       <label>M (liens par nœud)
         <input type="number" name="hnsw_m" min="16" max="64" value="{{.Settings.HNSWM}}" required>
       </label>
@@ -82,7 +184,8 @@
     <label>Consigne supplémentaire (optionnel)
       <textarea name="system_prompt" rows="4" placeholder="Ex : réponds en français et cite toujours les sources.">{{.Settings.SystemPrompt}}</textarea>
     </label>
-    <p class="note">Le découpage s'applique aux prochains imports. Changer de modèle d'embedding rend les passages existants incompatibles : réindexez les documents depuis la page de test.</p>
+    <p class="note">Le découpage s'applique aux prochains imports ; les documents déjà indexés gardent leurs passages. <strong>Fixe</strong> glisse une fenêtre de la taille indiquée, <strong>ponctuation</strong> respecte les phrases et paragraphes, <strong>balises</strong> découpe par titres Markdown (chaque passage garde son titre) et <strong>sémantique</strong> regroupe les phrases dont les embeddings sont proches, au prix d'un embedding supplémentaire par import. Changer de modèle d'embedding rend les passages existants incompatibles : réindexez les documents à droite.</p>
+    <p class="note"><strong>Dense</strong> classe par similarité de vecteurs. <strong>Hybride</strong> ajoute un classement BM25 (termes exacts, références, acronymes) fusionné par Reciprocal Rank Fusion. <strong>MMR</strong> réordonne ensuite les <em>candidats</em> pour écarter les passages redondants : lambda proche de 1 privilégie la pertinence, proche de 0.1 la diversité. Le nombre de candidats doit être supérieur ou égal à top_k.</p>
     <button class="btn" type="submit">Enregistrer</button>
   </form>
 </div>
@@ -114,98 +217,6 @@
 </div>
 {{end}}
 
-{{define "page_rag_test"}}
-{{template "head" .}}
-<body hx-boost="true">
-{{template "nav" .}}
-<main id="main" class="page">
-  <div class="page-head">
-    <div>
-      <h1>RAG — Test</h1>
-      <p class="muted">Indexez un document puis posez une question : la réponse est construite uniquement à partir des passages retrouvés.</p>
-    </div>
-  </div>
-
-  <div id="rag-test-error"></div>
-
-  {{if .Projects}}
-  <div class="card">
-    <label>Projet
-      <select onchange="if(this.value){window.location='/rag/test?project_id='+encodeURIComponent(this.value)}">
-        {{range .Projects}}
-        <option value="{{.ID}}" {{if eq .ID $.SelectedProjectID}}selected{{end}}>{{.Name}}</option>
-        {{end}}
-      </select>
-    </label>
-    {{with .Settings}}
-    <div class="meta-row" style="margin-top:10px">
-      <span class="badge ok">{{.EmbeddingModel}}</span>
-      <span class="badge">top_k {{.TopK}}</span>
-      <span class="badge">chunks {{.ChunkSize}} / {{.ChunkOverlap}}</span>
-      <a class="btn ghost small" href="/rag/settings?project_id={{.ProjectID}}">Modifier</a>
-    </div>
-    {{end}}
-  </div>
-
-  <div class="grid2">
-    <div class="card">
-      <h3 class="card-title">Ajouter un document</h3>
-      <form hx-post="/rag/test/upload" hx-encoding="multipart/form-data" hx-target="#rag-documents" hx-swap="innerHTML" hx-indicator="#rag-upload-loading">
-        <input type="hidden" name="project_id" value="{{.SelectedProjectID}}">
-        <label>Fichier
-          <input type="file" name="file" required accept=".txt,.md,.markdown,.csv,.json,.log,.yaml,.yml,.xml,.html,.htm,.pdf,.png,.jpg,.jpeg,.webp,.gif,.bmp,.tif,.tiff">
-        </label>
-        <p class="note">Textes, PDF (couche texte) et images (OCR par le modèle de vision du projet), 25 Mo maximum.</p>
-        <button class="btn" type="submit">Indexer</button>
-        <span id="rag-upload-loading" class="htmx-indicator muted hint">Extraction et embedding…</span>
-      </form>
-    </div>
-
-    <div class="card">
-      <h3 class="card-title">Poser une question</h3>
-      <form hx-post="/rag/test/query" hx-target="#rag-answer" hx-swap="innerHTML" hx-indicator="#rag-query-loading">
-        <input type="hidden" name="project_id" value="{{.SelectedProjectID}}">
-        <label>Question
-          <textarea name="question" rows="3" placeholder="Que disent les documents à propos de… ?" required></textarea>
-        </label>
-        <div class="grid2">
-          <label>Mode
-            <select name="mode">
-              <option value="answer">Réponse du modèle</option>
-              <option value="search">Recherche seule</option>
-            </select>
-          </label>
-          <label>top_k (optionnel)
-            <input type="number" name="top_k" min="1" max="20" placeholder="Paramètres du projet">
-          </label>
-        </div>
-        <button class="btn" type="submit">Lancer</button>
-        <span id="rag-query-loading" class="htmx-indicator muted hint">Recherche en cours…</span>
-      </form>
-    </div>
-  </div>
-
-  <section class="card">
-    <h3 class="card-title">Documents indexés</h3>
-    <section id="rag-documents">
-      {{template "rag_documents_body" .}}
-    </section>
-  </section>
-
-  <div id="rag-answer">
-    <div class="card center muted empty-state">La réponse et les sources apparaîtront ici.</div>
-  </div>
-  {{else}}
-  <div class="card center muted empty-state">
-    Aucun projet. <a href="/projects">Créez un projet</a> avant d'utiliser le RAG.
-  </div>
-  {{end}}
-</main>
-{{template "tail" .}}
-</body>
-</html>
-{{end}}
-
 {{define "rag_documents_body"}}
 {{if .Message}}<div class="toast ok">{{.Message}}</div>{{end}}
 <div class="table-wrap">
@@ -214,13 +225,18 @@
     <tbody>
     {{range .Documents}}
       <tr>
-        <td><strong>{{.FileName}}</strong></td>
+        <td>
+          <button type="button" class="link-btn" title="Voir les passages"
+                  hx-get="/rag/documents/{{.ID}}/chunks?project_id={{$.SelectedProjectID}}"
+                  hx-target="#rag-document-dialog" hx-swap="innerHTML"
+                  hx-on::after-request="if(event.detail.successful){document.getElementById('rag-document-dialog').showModal()}">{{.FileName}}</button>
+        </td>
         <td>{{.ChunkCount}}</td>
         <td><span class="badge">{{.EmbeddingModel}}</span></td>
         <td class="muted">{{.SizeBytes}} o</td>
         <td class="muted">{{.CreatedAt.Format "02/01/2006 15:04"}}</td>
         <td class="actions">
-          <form hx-post="/rag/test/documents/{{.ID}}/delete" hx-target="#rag-documents" hx-swap="innerHTML"
+          <form hx-post="/rag/documents/{{.ID}}/delete" hx-target="#rag-documents" hx-swap="innerHTML"
                 hx-confirm="Supprimer ce document et ses passages ?">
             <input type="hidden" name="project_id" value="{{$.SelectedProjectID}}">
             <button class="btn danger small" type="submit">Supprimer</button>
@@ -281,4 +297,25 @@
   <p class="muted">Aucun passage ne correspond à cette question.</p>
   {{end}}
 </div>
+{{end}}
+
+{{define "rag_document_chunks"}}
+<div class="log-head">
+  <div>
+    <h2>{{.Document.FileName}}</h2>
+    <p class="muted">{{len .Chunks}} passage(s) · {{.Document.EmbeddingModel}}</p>
+  </div>
+  <button class="btn ghost small" type="button" onclick="this.closest('dialog').close()">Fermer</button>
+</div>
+{{range .Chunks}}
+<div class="source-chunk">
+  <div class="meta-row" style="margin-bottom:6px">
+    <span class="badge">passage #{{.Ordinal}}</span>
+    <span class="badge">{{len .Text}} octets</span>
+  </div>
+  <div style="font-size:.88rem;line-height:1.55;white-space:pre-wrap">{{.Text}}</div>
+</div>
+{{else}}
+<p class="muted">Aucun passage stocké pour ce document.</p>
+{{end}}
 {{end}}

@@ -98,6 +98,9 @@ const (
 )
 
 var EmbeddingChoices = embedding.EmbeddingChoices
+var RAGChunkingChoices = domainrag.ChunkingChoices
+var RAGRetrievalChoices = domainrag.RetrievalChoices
+var RAGRerankChoices = domainrag.RerankChoices
 
 // Retrieval-augmented generation.
 type (
@@ -116,6 +119,7 @@ type (
 	RAGSearchResult       = domainrag.SearchResult
 	RAGChunkIndex         = domainrag.ChunkIndex
 	RAGIndexOptions       = domainrag.IndexOptions
+	RAGChunkingChoice     = domainrag.ChunkingChoice
 )
 
 const (
@@ -131,6 +135,16 @@ const (
 	DefaultRAGTopK  = domainrag.DefaultTopK
 	MaxRAGTopK      = domainrag.MaxTopK
 	DefaultRAGChunk = domainrag.DefaultChunkSize
+
+	RAGChunkingFixed    = domainrag.ChunkingFixed
+	RAGChunkingSentence = domainrag.ChunkingSentence
+	RAGChunkingMarkdown = domainrag.ChunkingMarkdown
+	RAGChunkingSemantic = domainrag.ChunkingSemantic
+
+	RAGRetrievalDense  = domainrag.RetrievalDense
+	RAGRetrievalHybrid = domainrag.RetrievalHybrid
+	RAGRerankNone      = domainrag.RerankNone
+	RAGRerankMMR       = domainrag.RerankMMR
 )
 
 // Monitoring snapshots.
@@ -192,6 +206,9 @@ func HashAPIKey(secret string) string                   { return project.HashAPI
 func NewAPIKey() (string, string, string)               { return project.NewAPIKey() }
 func NormalizeModelKind(kind string) string             { return provider.NormalizeModelKind(kind) }
 func FindEmbeddingChoice(model string) *EmbeddingChoice { return embedding.FindEmbeddingChoice(model) }
+func RAGChunkingLabel(method string) string             { return domainrag.ChunkingLabel(method) }
+func RAGRetrievalLabel(mode string) string              { return domainrag.RetrievalLabel(mode) }
+func RAGRerankLabel(name string) string                 { return domainrag.RerankLabel(name) }
 func IsOnnxChatServed(cfg *ChatConfig, m *ModelInfo) bool {
 	return chat.ServedByOnnx(cfg, m)
 }

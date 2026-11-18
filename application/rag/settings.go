@@ -72,6 +72,9 @@ func applyIngestSettings(settings *domainrag.Settings, opts IngestOptions) Inges
 	if opts.ChunkOverlap <= 0 {
 		opts.ChunkOverlap = settings.ChunkOverlap
 	}
+	if strings.TrimSpace(opts.ChunkingMethod) == "" {
+		opts.ChunkingMethod = settings.ChunkingMethod
+	}
 	return opts
 }
 

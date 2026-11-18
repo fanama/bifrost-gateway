@@ -77,6 +77,7 @@ type ragService interface {
 	SaveSettings(ctx context.Context, settings *domain.RAGSettings) (*domain.RAGSettings, error)
 	Ingest(ctx context.Context, projectID, fileName, contentType string, content []byte, opts application.RAGIngestOptions) (*domain.Document, error)
 	Documents(ctx context.Context, projectID string) ([]domain.Document, error)
+	DocumentChunks(ctx context.Context, projectID, documentID string) (*domain.Document, []domain.Chunk, error)
 	DeleteDocument(ctx context.Context, projectID, documentID string) error
 	Query(ctx context.Context, projectID, question string, opts application.RAGQueryOptions) (*domain.Answer, error)
 	Search(ctx context.Context, projectID, question string, opts application.RAGQueryOptions) (*domain.RAGSearchResult, error)

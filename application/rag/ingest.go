@@ -32,9 +32,9 @@ func (s *Service) Ingest(
 	if err != nil {
 		return nil, err
 	}
-	passages := domainrag.ChunkText(text, opts.ChunkSize, opts.ChunkOverlap)
-	if len(passages) == 0 {
-		return nil, &domain.InvalidRequestError{Param: "file", Reason: "document has no readable text"}
+	passages, err := s.chunkPassages(ctx, projectID, text, opts)
+	if err != nil {
+		return nil, err
 	}
 	vectors, model, err := s.embedTexts(ctx, projectID, passages, opts.EmbeddingModel)
 	if err != nil {

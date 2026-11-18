@@ -124,35 +124,56 @@ func (s *chatController) chatSend(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cfgID := r.FormValue("config_id")
-	message := r.FormValue("message")
+	message := strings.TrimSpace(r.FormValue("message"))
 
-	var history []domain.ChatMessage
-	if raw := strings.TrimSpace(r.FormValue("history")); raw != "" {
-		if err := json.Unmarshal([]byte(raw), &history); err != nil {
-			history = nil
-		}
-	}
-
-	// Le selecteur de raisonnement prime sur la configuration, sans la
-	// modifier : "selon la configuration" n'envoie aucune surcharge.
-	var opts *domain.RequestOptions
-	if effort := strings.ToLower(strings.TrimSpace(r.FormValue("reasoning_effort"))); effort != "" {
-		opts = &domain.RequestOptions{ReasoningEffort: &effort}
-	}
-
-	result, err := s.chat.Send(r.Context(), cfgID, history, message, opts)
+	result, err := s.chat.Send(r.Context(), cfgID, chatHistory(r), message, reasoningOption(r))
 	if err != nil {
+		// Le formulaire ajoute le fragment a la fin de la discussion ; une
+		// erreur doit au contraire remplacer le bandeau d'erreur existant.
+		w.Header().Set("HX-Reswap", "innerHTML")
 		s.renderToast(w, "#chat-error", err.Error())
 		return
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	// L'historique complet de la conversation est classe, pas seulement le
-	// dernier message.
-	s.render(w, "chat_messages", map[string]any{
-		"Messages":        result.Messages,
-		"ServedModel":     result.Model,
-		"RequestedModel":  result.RequestedModel,
-		"ReasoningEffort": result.ReasoningEffort,
+	// Seul le nouvel echange est rendu : htmx l'ajoute a la fin du DOM, donc
+	// les messages precedents restent affiches et sont renvoyes, intacts, au
+	// prochain appel. Remplacer la liste entiere la tronquerait a la fenetre
+	// d'historique du modele.
+	s.render(w, "chat_turn", map[string]any{
+		"UserMessage":      message,
+		"AssistantMessage": lastReply(result.Messages),
+		"ServedModel":      result.Model,
+		"RequestedModel":   result.RequestedModel,
+		"ReasoningEffort":  result.ReasoningEffort,
 	})
+}
+
+// chatHistory decode la conversation que la page renvoie a chaque tour.
+func chatHistory(r *http.Request) []domain.ChatMessage {
+	var history []domain.ChatMessage
+	if raw := strings.TrimSpace(r.FormValue("history")); raw != "" {
+		if err := json.Unmarshal([]byte(raw), &history); err != nil {
+			return nil
+		}
+	}
+	return history
+}
+
+// reasoningOption traduit le selecteur en surcharge ponctuelle : "selon la
+// configuration" n'envoie aucune surcharge et ne modifie pas la configuration.
+func reasoningOption(r *http.Request) *domain.RequestOptions {
+	effort := strings.ToLower(strings.TrimSpace(r.FormValue("reasoning_effort")))
+	if effort == "" {
+		return nil
+	}
+	return &domain.RequestOptions{ReasoningEffort: &effort}
+}
+
+// lastReply extrait le contenu de la reponse ajoutee par l'use case.
+func lastReply(messages []domain.ChatMessage) string {
+	if n := len(messages); n > 0 {
+		return messages[n-1].Content
+	}
+	return ""
 }

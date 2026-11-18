@@ -283,11 +283,14 @@ port is configured.
 | `/monitoring/logs` | GET | LLM call log modal fragment (inputs and outputs) |
 | `/monitoring/logs.json` | GET | LLM call log export (JSON download) |
 | `/monitoring/logs.csv` | GET | LLM call log export (CSV download) |
-| `/rag/settings` | GET/POST | Per-project RAG parameters |
-| `/rag/test` | GET | RAG upload, corpus and query test bench |
-| `/rag/test/upload` | POST | Index a document from the test page |
-| `/rag/test/query` | POST | Answer or search-only HTMX fragment |
-| `/rag/test/documents/{id}/delete` | POST | Delete a document from the test page |
+| `/rag` | GET | RAG settings, index, corpus and query test bench |
+| `/rag/settings` | GET/POST | Legacy page URL (redirects to `/rag`) and per-project parameters save |
+| `/rag/upload` | POST | Index a document from the RAG page |
+| `/rag/query` | POST | Answer or search-only HTMX fragment |
+| `/rag/documents/{id}/chunks` | GET | Passages and text of one document (HTMX fragment) |
+| `/rag/documents/{id}/delete` | POST | Delete a document from the RAG page |
+| `/rag/index/rebuild` | POST | Rebuild the HNSW index |
+| `/rag/test` | GET | Legacy page URL (redirects to `/rag`) |
 | `/health/liveness` | GET | Liveness probe |
 | `/health/readiness` | GET | Readiness probe |
 | `/health/test_connection` | GET | Provider connectivity check |
@@ -571,9 +574,25 @@ visible text in reading order and falls back to a short factual description
 when the image carries none, so a picture stays searchable. Without an active
 configuration the upload fails with an explicit message.
 
-Chunking targets the configured `chunk_size` but snaps back to the nearest
-paragraph or line boundary, so the Markdown structure survives into the
-passages rather than being cut mid-word.
+The chunking method and target size are chosen per project on the RAG settings
+page. `fixed` slides a window of `chunk_size` characters with `chunk_overlap`,
+snapping back to the nearest paragraph or line boundary. `sentence` keeps
+sentences and paragraphs whole and groups them up to the target. `markdown`
+splits on Markdown headings (fenced code aside) and prefixes every passage with
+its heading. `semantic` embeds each sentence and groups neighbours whose
+vectors are close, at the cost of one extra embedding batch per upload. A
+hierarchical method would need several indexes per document, which the current
+single-index retrieval does not model.
+
+Retrieval is the second configurable stage. `dense` ranks passages with the
+HNSW graph (or the exact cosine scan). `hybrid` also scores the same passages
+with BM25 over their text and merges both rankings through Reciprocal Rank
+Fusion, so an acronym, a part number or a quoted reference is not lost between
+semantically close passages. An optional `mmr` reranker then reorders the
+candidate pool to remove redundancy: `mmr_lambda` weights relevance against
+diversity (0.1 to 1, default 0.7), and `retrieval_candidates` sizes the pool
+fetched before that stage (at least `top_k`). Every stage is stored per project
+and shown on the settings page as the active chain.
 
 Retrieval uses a per-project, in-memory HNSW graph built from the stored
 vectors. The graph is rebuilt from SQLite after a restart, updated by

@@ -17,6 +17,7 @@ type IngestOptions struct {
 	EmbeddingModel string
 	ChunkSize      int
 	ChunkOverlap   int
+	ChunkingMethod string
 }
 
 // QueryOptions tunes retrieval and generation for one question.
