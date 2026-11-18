@@ -16,6 +16,13 @@ Rules:
 - Keep the answer to two or three sentences.
 - If the passages do not cover the subject, say so explicitly.`
 
+// GroundedPrompt builds the user message of an augmented chat turn. The
+// discussion page uses it when RAG is enabled: the grounding rules travel with
+// the question, so the project's own system prompt still applies unchanged.
+func GroundedPrompt(question string, retrieved []RetrievedChunk) string {
+	return systemRules + "\n\n" + userPrompt(question, retrieved)
+}
+
 // BuildMessages builds the system/user pair sent to the chat model. The model
 // never receives the bare question without the no-context instruction.
 func BuildMessages(question string, retrieved []RetrievedChunk, extraSystem string) []chat.ChatMessage {

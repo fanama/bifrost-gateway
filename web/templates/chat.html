@@ -18,6 +18,12 @@
         <option value="high">élevé</option>
       </select>
     </div>
+    {{if .HasRAG}}
+    <div class="chat-topbar-left">
+      <label for="chat-use-rag" title="Ajouter les passages du corpus du projet au prochain message">Utiliser le RAG</label>
+      <input type="checkbox" id="chat-use-rag" name="use_rag" value="1" form="chat-form">
+    </div>
+    {{end}}
     <div class="actions">
       <button class="btn ghost small" type="button" onclick="resetChat()">Nouvelle discussion</button>
     </div>
@@ -290,6 +296,12 @@ document.addEventListener('htmx:afterSwap', function(evt) {
 </div>
 {{if or .ServedModel .ReasoningEffort}}
 <div class="chat-served-model">{{if .ServedModel}}Réponse produite par <strong>{{.ServedModel}}</strong>{{if ne .ServedModel .RequestedModel}} <span class="hint">(routage automatique ; configuration sélectionnée : {{.RequestedModel}})</span>{{end}} &bull; {{end}}Raisonnement : <strong>{{if .ReasoningEffort}}{{reasoningLabel .ReasoningEffort}}{{else}}défaut du modèle{{end}}</strong></div>
+{{end}}
+{{if .RAGUsed}}
+<div class="chat-rag-sources">
+  <span class="badge">RAG</span>
+  {{range .Sources}}<span class="badge">{{.FileName}} · #{{.ChunkIndex}}</span>{{else}}<span class="muted hint">aucun passage trouvé</span>{{end}}
+</div>
 {{end}}
 {{end}}
 

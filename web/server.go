@@ -65,8 +65,9 @@ func NewServer(
 	if len(ragServices) > 0 && ragServices[0] != nil {
 		rag.rag = ragServices[0]
 	}
+	chatUI := chatController{uiShared: shared, chat: chat, configs: configs, rag: rag.rag}
 	return &Server{
-		chat:       chatController{uiShared: shared, chat: chat, configs: configs},
+		chat:       chatUI,
 		embeddings: embeddingsController{uiShared: shared, embeddings: embeddings},
 		providers:  providersController{uiShared: shared},
 		models:     modelsController{uiShared: shared, catalog: catalog},

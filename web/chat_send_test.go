@@ -42,6 +42,20 @@ func (s *stubChatService) Send(
 	}, nil
 }
 
+// stubChatConfigs ne implemente que ce que la discussion utilise : la liste et
+// la lecture d'une configuration. Les autres methodes du port restent nil.
+type stubChatConfigs struct {
+	configService
+}
+
+func (stubChatConfigs) List(context.Context) ([]domain.ChatConfig, error) {
+	return []domain.ChatConfig{{ID: "cfg-1", Name: "Test", Model: "mistral-large", ProjectID: "p1", Active: true}}, nil
+}
+
+func (stubChatConfigs) Get(context.Context, string) (*domain.ChatConfig, error) {
+	return &domain.ChatConfig{ID: "cfg-1", Name: "Test", Model: "mistral-large", ProjectID: "p1", Active: true}, nil
+}
+
 func chatSendMux(t *testing.T, stub *stubChatService) *http.ServeMux {
 	t.Helper()
 	server, err := NewServer(stub, nil, nil, nil, nil, nil, nil, nil, nil, "")
@@ -107,6 +121,70 @@ func TestChatSendAppendsOnlyTheNewTurnWithMarkdown(t *testing.T) {
 	// jamais dans le texte affiche.
 	if n := strings.Count(body, "## Réponse"); n != 1 {
 		t.Fatalf("raw markdown displayed %d times, want 1 (the data-content attribute):\n%s", n, body)
+	}
+}
+
+func chatRAGMux(t *testing.T, stub *stubChatService, rag *stubRAG) *http.ServeMux {
+	t.Helper()
+	server, err := NewServer(stub, stubChatConfigs{}, nil, nil, nil, nil, nil, nil, nil, "", rag)
+	if err != nil {
+		t.Fatalf("new server: %v", err)
+	}
+	mux := http.NewServeMux()
+	server.Register(mux)
+	return mux
+}
+
+func TestChatPageShowsRAGCheckbox(t *testing.T) {
+	server, err := NewServer(nil, stubChatConfigs{}, nil, nil, nil, nil, nil, nil, nil, "", &stubRAG{})
+	if err != nil {
+		t.Fatalf("new server: %v", err)
+	}
+	mux := http.NewServeMux()
+	server.Register(mux)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+
+	if !strings.Contains(rec.Body.String(), `name="use_rag"`) {
+		t.Fatalf("RAG checkbox missing from the discussion page: %s", rec.Body.String())
+	}
+}
+
+func TestChatSendUsesRAGWhenChecked(t *testing.T) {
+	stub := &stubChatService{reply: "Orion [1]"}
+	mux := chatRAGMux(t, stub, &stubRAG{})
+
+	form := url.Values{}
+	form.Set("config_id", "cfg-1")
+	form.Set("message", "Qui est Orion ?")
+	form.Set("use_rag", "1")
+
+	req := httptest.NewRequest("POST", "/chat/send", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	// Le modele recoit le passage retrouve et la question.
+	if !strings.Contains(stub.message, "Passage alpha") || !strings.Contains(stub.message, "Qui est Orion ?") {
+		t.Fatalf("grounded prompt missing context: %q", stub.message)
+	}
+
+	body := rec.Body.String()
+	// La bulle utilisateur garde ce que la personne a tape, pas le prompt.
+	if !strings.Contains(body, `data-content="Qui est Orion ?"`) {
+		t.Fatalf("user bubble must keep the typed message: %s", body)
+	}
+	if strings.Contains(body, "Passage alpha") {
+		t.Fatalf("grounded prompt leaked into the conversation: %s", body)
+	}
+	// Les sources du corpus sont affichees avec la reponse.
+	if !strings.Contains(body, "notes.txt") || !strings.Contains(body, `class="badge">RAG</span>`) {
+		t.Fatalf("RAG sources missing from the reply: %s", body)
 	}
 }
 

@@ -14,6 +14,7 @@ type chatController struct {
 	uiShared
 	chat    chatService
 	configs configService
+	rag     ragService
 }
 
 func (s *chatController) pageChat(w http.ResponseWriter, r *http.Request) {
@@ -45,6 +46,7 @@ func (s *chatController) pageChat(w http.ResponseWriter, r *http.Request) {
 		"HasActive":    hasActive,
 		"BaseURL":      chatAPIBaseURL(r),
 		"DefaultModel": defaultModel,
+		"HasRAG":       s.rag != nil,
 	})
 }
 
@@ -125,8 +127,14 @@ func (s *chatController) chatSend(w http.ResponseWriter, r *http.Request) {
 
 	cfgID := r.FormValue("config_id")
 	message := strings.TrimSpace(r.FormValue("message"))
+	useRAG := ragRequested(r)
+	prompt, sources, err := s.chatPrompt(r, cfgID, message)
+	if err != nil {
+		s.renderToast(w, "#chat-error", err.Error())
+		return
+	}
 
-	result, err := s.chat.Send(r.Context(), cfgID, chatHistory(r), message, reasoningOption(r))
+	result, err := s.chat.Send(r.Context(), cfgID, chatHistory(r), prompt, reasoningOption(r))
 	if err != nil {
 		// Le formulaire ajoute le fragment a la fin de la discussion ; une
 		// erreur doit au contraire remplacer le bandeau d'erreur existant.
@@ -146,6 +154,8 @@ func (s *chatController) chatSend(w http.ResponseWriter, r *http.Request) {
 		"ServedModel":      result.Model,
 		"RequestedModel":   result.RequestedModel,
 		"ReasoningEffort":  result.ReasoningEffort,
+		"RAGUsed":          useRAG,
+		"Sources":          sources,
 	})
 }
 
