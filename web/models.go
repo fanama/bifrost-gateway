@@ -1,6 +1,12 @@
 package web
 
-import "net/http"
+import (
+	"context"
+	"net/http"
+	"strings"
+
+	"bridge-gateway/domain"
+)
 
 // modelsController regroupe la page Modeles : consultation du catalogue
 // fusionne et ajout/suppression de modeles.
@@ -11,28 +17,19 @@ type modelsController struct {
 
 // ---- Modeles ----
 
+// pageModels keeps /models bookmarks working after the merge with /providers.
 func (s *modelsController) pageModels(w http.ResponseWriter, r *http.Request) {
-	models, err := s.models.List(r.Context())
-	if err != nil {
-		s.renderToast(w, "#models-error", err.Error())
-		return
-	}
-	s.render(w, "page_models", map[string]any{
-		"Active":    "models",
-		"Title":     "Modeles",
-		"Models":    models,
-		"Providers": s.providerNames(r.Context()),
-	})
+	http.Redirect(w, r, "/providers#models", http.StatusSeeOther)
 }
 
 func (s *modelsController) renderModelsList(w http.ResponseWriter, r *http.Request) {
-	models, err := s.models.List(r.Context())
+	groups, err := s.catalogGroups(r.Context())
 	if err != nil {
 		s.renderToast(w, "#models-error", err.Error())
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	s.render(w, "models_list", map[string]any{"Models": models})
+	s.render(w, "catalog_groups", map[string]any{"Groups": groups})
 }
 
 func (s *modelsController) createModel(w http.ResponseWriter, r *http.Request) {
@@ -60,4 +57,53 @@ func (s *modelsController) deleteModel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.renderModelsList(w, r)
+}
+
+// providerGroup rassemble un provider et les modeles qui lui sont rattaches.
+type providerGroup struct {
+	Provider *domain.Provider
+	Name     string
+	Models   []domain.ModelInfo
+}
+
+// catalogGroups fusionne le catalogue des providers et celui des modeles.
+func (s *uiShared) catalogGroups(ctx context.Context) ([]providerGroup, error) {
+	providers, err := s.providers.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	models, err := s.models.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return groupModelsByProvider(providers, models), nil
+}
+
+// groupModelsByProvider garde l'ordre des providers, puis ajoute ceux qui
+// n'existent que dans le catalogue de modeles.
+func groupModelsByProvider(providers []domain.Provider, models []domain.ModelInfo) []providerGroup {
+	groups := make([]providerGroup, 0, len(providers))
+	index := make(map[string]int, len(providers))
+	for i := range providers {
+		index[providerKey(providers[i].Name)] = len(groups)
+		groups = append(groups, providerGroup{Provider: &providers[i], Name: providers[i].Name})
+	}
+	for _, model := range models {
+		name := strings.TrimSpace(model.Provider)
+		if name == "" {
+			name = "Sans provider"
+		}
+		pos, ok := index[providerKey(name)]
+		if !ok {
+			pos = len(groups)
+			index[providerKey(name)] = pos
+			groups = append(groups, providerGroup{Name: name})
+		}
+		groups[pos].Models = append(groups[pos].Models, model)
+	}
+	return groups
+}
+
+func providerKey(name string) string {
+	return strings.ToLower(strings.TrimSpace(name))
 }

@@ -4,14 +4,50 @@
 {{template "nav" .}}
 <main id="main" class="page">
   <div class="page-head">
-    <h1>Providers</h1>
-    <button class="btn" type="button" onclick="document.getElementById('provider-form-zone').showModal()">+ Nouveau provider</button>
+    <div>
+      <h1>Providers &amp; modèles</h1>
+      <p class="muted">Un provider porte les identifiants d'un service ; ses modèles sont regroupés dans le même catalogue.</p>
+    </div>
+    <div class="actions">
+      <button class="btn ghost" type="button" onclick="document.getElementById('model-form-zone').showModal()">+ Ajouter un modèle</button>
+      <button class="btn" type="button" onclick="document.getElementById('provider-form-zone').showModal()">+ Nouveau provider</button>
+    </div>
   </div>
   <div id="providers-error"></div>
+  <div id="models-error"></div>
   {{template "provider_form" .Create}}
-  <section id="providers-list">
-    {{template "provider_rows" .}}
+  <h2 class="card-title" id="models">Catalogue par provider</h2>
+  <section id="catalog" aria-label="Catalogue des providers et de leurs modèles">
+    {{template "catalog_groups" .}}
   </section>
+  <dialog id="model-form-zone" class="card">
+    <h3 style="margin-top:0">Nouveau modèle</h3>
+    <form hx-post="/models" hx-target="#catalog" hx-swap="innerHTML"
+          hx-on::after-request="if(event.detail.successful){this.closest('dialog').close()}">
+      <label>Nom du modèle
+        <input name="name" placeholder="ex : qwen3:8b" required>
+      </label>
+      <label>Provider
+        <select name="provider" required>
+          <option value="" disabled selected>— choisir —</option>
+          {{range .ProviderNames}}
+          <option value="{{.}}">{{.}}</option>
+          {{end}}
+        </select>
+      </label>
+      <label>Type
+        <select name="kind" required>
+          <option value="chat" selected>Chat</option>
+          <option value="embedding">Embedding (vecteurs)</option>
+        </select>
+      </label>
+      <p class="muted" style="font-size:0.78rem;margin:0">Un modèle « embedding » rejoint le select du testeur (page Embeddings) et l'API /v1/embeddings.</p>
+      <div class="form-actions">
+        <button class="btn" type="submit">Ajouter au catalogue</button>
+        <button class="btn ghost" type="button" onclick="this.closest('dialog').close()">Annuler</button>
+      </div>
+    </form>
+  </dialog>
 </main>
 {{template "tail" .}}
 </body>
@@ -21,7 +57,7 @@
 {{define "provider_form"}}
 <dialog id="provider-form-zone" class="card">
   <h3 style="margin-top:0">{{if .Editing}}Modifier : {{.Editing.Name}}{{else}}Nouveau provider{{end}}</h3>
-  <form hx-post="{{.Action}}" hx-target="#providers-list" hx-swap="innerHTML"
+  <form hx-post="{{.Action}}" hx-target="#catalog" hx-swap="innerHTML"
         hx-on::after-request="if(event.detail.successful){this.closest('dialog').close()}">
     <label>Nom
       <input name="name" placeholder="ex : google, openai, mistral, anthropic, ollama" value="{{if .Editing}}{{.Editing.Name}}{{end}}" required>
@@ -38,28 +74,4 @@
     </div>
   </form>
 </dialog>
-{{end}}
-
-{{define "provider_rows"}}
-<div class="table-wrap">
-  <table>
-    <thead><tr><th>Nom</th><th>Base URL par defaut</th><th>Clé API</th><th>Actions</th></tr></thead>
-    <tbody>
-    {{range .Providers}}
-      <tr>
-        <td><strong>{{.Name}}</strong></td>
-        <td class="muted">{{if .BaseURL}}{{.BaseURL}}{{else}}-{{end}}</td>
-        <td>{{if .APIKey}}<code>{{.MaskedKey}}</code>{{else}}<span class="muted">Non définie</span>{{end}}</td>
-        <td class="actions">
-          <button class="btn small" hx-get="/providers/{{.ID}}/edit" hx-target="#provider-form-zone" hx-swap="outerHTML"
-                  hx-on::after-request="document.getElementById('provider-form-zone').showModal()">Modifier</button>
-          <button class="btn small danger" hx-delete="/providers/{{.ID}}" hx-confirm="Supprimer ce provider ?" hx-target="#providers-list" hx-swap="innerHTML">Supprimer</button>
-        </td>
-      </tr>
-    {{else}}
-      <tr><td colspan="4" class="muted center">Aucun provider. Cliquez sur &laquo; Nouveau provider &raquo;.</td></tr>
-    {{end}}
-    </tbody>
-  </table>
-</div>
 {{end}}

@@ -1,0 +1,733 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bridge Gateway — une seule API OpenAI, du cloud au local</title>
+<style>
+  :root {
+    --ink: #12171f;
+    --ink-soft: #33404f;
+    --muted: #667485;
+    --line: #d9d6cf;
+    --paper: #f6f4ef;
+    --card: #ffffff;
+    --accent: #0f6b64;
+    --accent-soft: #e3f1ee;
+    --warm: #b45309;
+    --warm-soft: #fbf0e2;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+    --serif: Georgia, "Iowan Old Style", "Palatino Linotype", Palatino, "Times New Roman", serif;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%; background: var(--paper); color: var(--ink);
+    font-family: var(--sans); -webkit-font-smoothing: antialiased;
+  }
+
+  .viewport { position: fixed; inset: 0; display: grid; place-items: center; overflow: hidden; }
+  .stage { width: 1280px; height: 720px; position: relative; transform-origin: center center; }
+
+  .slide {
+    position: absolute; inset: 0; display: none; flex-direction: column;
+    padding: 50px 68px 52px; background: var(--card);
+    border: 1px solid var(--line); border-radius: 6px;
+    overflow: hidden;
+  }
+  .slide.active { display: flex; }
+
+  .eyebrow {
+    display: flex; align-items: center; gap: 10px; font-size: 12.5px; font-weight: 600;
+    letter-spacing: .16em; text-transform: uppercase; color: var(--muted);
+  }
+  .eyebrow::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+
+  h1 {
+    font-family: var(--serif); font-weight: 600; font-size: 60px; line-height: 1.05;
+    letter-spacing: -.02em; margin: 24px 0 0; max-width: 20ch;
+  }
+  h2 {
+    font-family: var(--serif); font-weight: 600; font-size: 38px; line-height: 1.14;
+    letter-spacing: -.015em; margin: 14px 0 0; max-width: 32ch;
+  }
+  h3 { font-size: 15.5px; margin: 0 0 6px; }
+  p { margin: 0; }
+  .lede { font-size: 19px; line-height: 1.5; color: var(--ink-soft); margin-top: 16px; max-width: 64ch; }
+  .note { font-size: 13.5px; line-height: 1.5; color: var(--muted); }
+  .mono { font-family: var(--mono); font-size: 12px; }
+  .muted { color: var(--muted); }
+
+  .body { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 22px; min-height: 0; }
+  .footer {
+    display: flex; align-items: center; justify-content: space-between; gap: 24px;
+    margin-top: 16px; padding-top: 13px; border-top: 1px solid var(--line);
+    font-size: 11.5px; color: var(--muted); letter-spacing: .04em;
+  }
+
+  .cols { display: grid; gap: 18px; }
+  .cols.two { grid-template-columns: 1fr 1fr; }
+  .cols.three { grid-template-columns: repeat(3, 1fr); }
+  .cols.four { grid-template-columns: repeat(4, 1fr); }
+
+  .card { background: #fbfaf7; border: 1px solid var(--line); border-radius: 4px; padding: 18px 20px; }
+  .card p { font-size: 14px; line-height: 1.5; color: var(--ink-soft); }
+  .card h3 { color: var(--ink); }
+
+  .num {
+    display: block; margin-bottom: 8px; font-family: var(--serif); font-size: 14px;
+    font-weight: 600; letter-spacing: .04em; color: var(--accent);
+  }
+  .stat { font-family: var(--serif); font-size: 42px; line-height: 1; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+  .stat small {
+    display: block; margin-top: 8px; font-family: var(--sans); font-size: 12.5px;
+    line-height: 1.45; letter-spacing: 0; color: var(--muted);
+  }
+
+  ul.clean { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+  ul.clean li { position: relative; padding-left: 22px; font-size: 14.5px; line-height: 1.45; color: var(--ink-soft); }
+  ul.clean li::before {
+    content: ""; position: absolute; left: 2px; top: .56em;
+    width: 7px; height: 7px; background: var(--accent); opacity: .8;
+  }
+  ul.clean strong { color: var(--ink); }
+
+  .rule {
+    display: grid; grid-template-columns: 30px 1fr; gap: 12px; align-items: start;
+    padding: 11px 14px; border-left: 2px solid var(--accent); background: #fbfaf7;
+  }
+  .rule .k { font-family: var(--serif); font-size: 16px; font-weight: 600; color: var(--accent); }
+  .rule p { font-size: 13.5px; line-height: 1.45; color: var(--ink-soft); }
+  .rule strong { color: var(--ink); }
+
+  .pills { display: flex; flex-wrap: wrap; gap: 8px; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 8px; padding: 6px 11px;
+    background: var(--accent-soft); border: 1px solid #cfe5e0; color: #0b4f4a;
+    font-size: 12px; font-weight: 600; letter-spacing: .02em;
+  }
+
+  .diagram { display: block; width: 100%; height: auto; }
+  .dg-box { fill: #fbfaf7; stroke: var(--line); stroke-width: 1; }
+  .dg-core { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.5; }
+  .dg-h { font-family: var(--sans); font-size: 13px; font-weight: 700; fill: var(--ink); }
+  .dg-sub { font-family: var(--sans); font-size: 11.5px; fill: var(--ink-soft); }
+  .dg-mono { font-family: var(--mono); font-size: 11px; fill: var(--muted); }
+  .dg-label { font-family: var(--sans); font-size: 11px; fill: var(--muted); }
+  .dg-edge { fill: none; stroke: var(--accent); stroke-width: 1.4; }
+
+  .lanes { display: grid; gap: 14px; }
+  .lane {
+    display: grid; grid-template-columns: 132px 1fr; align-items: center; gap: 14px;
+    padding: 13px 15px; border: 1px solid var(--line); background: #fbfaf7;
+  }
+  .lane-label { font-size: 11.5px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--accent); }
+  .row { display: flex; align-items: stretch; }
+  .node {
+    flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center;
+    padding: 8px 10px; border: 1px solid #cfd6d3; background: #fff;
+    font-size: 12px; line-height: 1.35;
+  }
+  .node strong { display: block; font-size: 12.5px; }
+  .node span { font-size: 11px; color: var(--muted); }
+  .arrow { align-self: center; flex: 0 0 auto; padding: 0 6px; font-size: 14px; color: #9aa8a5; }
+
+  .slide.title {
+    padding: 60px 72px 52px; color: #f3f7f6; border-color: #0d2a2e;
+    background: #10302f;
+  }
+  .slide.title .eyebrow { color: #9fc4bd; }
+  .slide.title .eyebrow::after { background: rgba(255, 255, 255, .16); }
+  .slide.title h1 { color: #fff; max-width: 21ch; }
+  .slide.title .lede { color: #c6dcd7; }
+  .slide.title .footer { border-top-color: rgba(255, 255, 255, .16); color: #9fc4bd; }
+  .title-grid { display: grid; grid-template-columns: 1.25fr .75fr; gap: 40px; align-items: end; }
+  .kv { display: grid; gap: 13px; align-content: end; margin: 0; }
+  .kv div { border-top: 1px solid rgba(255, 255, 255, .18); padding-top: 9px; }
+  .kv dt { margin: 0 0 4px; font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: #8fb6ae; }
+  .kv dd { margin: 0; font-size: 14px; line-height: 1.4; color: #eaf3f1; }
+
+  .slide.dark { background: #0f1b21; border-color: #16262e; color: #eef4f3; }
+  .slide.dark .eyebrow { color: #8fb6ae; }
+  .slide.dark .eyebrow::after { background: rgba(255, 255, 255, .16); }
+  .slide.dark h2 { color: #fff; }
+  .slide.dark .note { color: #a9c2be; }
+  .slide.dark .footer { border-top-color: rgba(255, 255, 255, .16); color: #8fb6ae; }
+  .slide.dark .card { background: rgba(255, 255, 255, .05); border-color: rgba(255, 255, 255, .14); }
+  .slide.dark .card p, .slide.dark ul.clean li { color: #b9cdc9; }
+  .slide.dark ul.clean strong { color: #fff; }
+  .slide.dark .mono { color: #9fd6cb; }
+
+  .progress { position: fixed; left: 0; top: 0; z-index: 10; width: 0; height: 2px; background: var(--accent); transition: width .25s ease; }
+  .chrome {
+    position: fixed; right: 18px; bottom: 14px; z-index: 10; display: flex; align-items: center;
+    gap: 10px; font-size: 12px; font-variant-numeric: tabular-nums; color: var(--muted);
+  }
+  .chrome button {
+    width: 30px; height: 30px; border: 1px solid var(--line);
+    background: #fff; color: var(--ink-soft); font-size: 14px; line-height: 1; cursor: pointer;
+  }
+  .counter { min-width: 48px; text-align: center; }
+  .hint { position: fixed; left: 18px; bottom: 18px; z-index: 10; font-size: 11.5px; letter-spacing: .04em; color: #98a3a0; }
+
+  @page { size: 1280px 720px; margin: 0; }
+  @media print {
+    html, body { height: auto; background: #fff; }
+    .viewport { position: static; display: block; overflow: visible; }
+    .stage { width: 1280px; height: auto; transform: none !important; }
+    .slide {
+      display: flex !important; position: relative; width: 1280px; height: 720px;
+      page-break-after: always; break-after: page;
+      border: none; box-shadow: none;
+    }
+    .chrome, .hint, .progress { display: none !important; }
+  }
+</style>
+</head>
+<body>
+
+<div class="progress" id="progress"></div>
+
+<div class="viewport">
+  <div class="stage" id="stage">
+
+    <!-- 1 · titre -->
+    <section class="slide title active">
+      <div class="eyebrow">Bridge Gateway · présentation du projet · novembre 2026</div>
+      <div class="title-grid" style="flex:1; align-items:center;">
+        <div>
+          <h1>Une seule API OpenAI. Du cloud au local. Des réponses citées.</h1>
+          <p class="lede">Une passerelle Go qui embarque BifrostAI, garde SQLite comme unique
+            stockage et répond depuis les documents de chaque projet — sans service vectoriel séparé.</p>
+          <div class="pills" style="margin-top:24px;">
+            <span class="pill">Go 1.26</span>
+            <span class="pill">BifrostAI v1.4.4</span>
+            <span class="pill">SQLite</span>
+            <span class="pill">ONNX local</span>
+          </div>
+        </div>
+        <dl class="kv">
+          <div><dt>Pour qui</dt><dd>Équipes qui veulent un accès LLM unifié</dd></div>
+          <div><dt>Ce que ça remplace</dt><dd>Proxy, base vectorielle, console séparée</dd></div>
+          <div><dt>Ce qui tourne</dt><dd>1 processus · 0 service externe</dd></div>
+        </dl>
+      </div>
+      <div class="footer"><span>Bridge Gateway · présentation</span><span>1 / 18</span></div>
+    </section>
+
+    <!-- 2 · problème -->
+    <section class="slide">
+      <div class="eyebrow">Le problème</div>
+      <div class="body">
+        <h2>Trois taxes d'intégration, payées par chaque équipe qui livre une fonction LLM.</h2>
+        <div class="cols three">
+          <div class="card">
+            <span class="num">01</span>
+            <h3>Dispersion des providers</h3>
+            <p>Dix backends, dix schémas d'authentification, dix formats d'erreur. Chaque équipe
+              réimplémente streaming, retries et comptage.</p>
+          </div>
+          <div class="card">
+            <span class="num">02</span>
+            <h3>Réponses sans preuve</h3>
+            <p>Le modèle ne cite que ce qui atteint son contexte. Un dossier de PDF n'est pas une
+              citation ; une réponse plausible n'est pas une source.</p>
+          </div>
+          <div class="card">
+            <span class="num">03</span>
+            <h3>Le RAG ajoute un service</h3>
+            <p>Un vector store, c'est un credential, une sauvegarde et une panne de plus à
+              surveiller — un autre système dont dépend une réponse.</p>
+          </div>
+        </div>
+        <p class="note">La contrainte n'est pas d'ajouter des providers : c'est de faire du retrieval sans ajouter de service.</p>
+      </div>
+      <div class="footer"><span>Bridge Gateway · présentation</span><span>2 / 18</span></div>
+    </section>
+
+    <!-- 3 · la réponse -->
+    <section class="slide">
+      <div class="eyebrow">La réponse</div>
+      <div class="body">
+        <div class="cols two" style="gap:40px; align-items:center;">
+          <div>
+            <h2 style="margin-top:0;">Un processus, une clé, un contrat de retrieval.</h2>
+            <ul class="clean" style="margin-top:18px;">
+              <li><strong>API OpenAI-compatible</strong> : <span class="mono">/v1/chat/completions</span>, <span class="mono">/v1/embeddings</span>, <span class="mono">/v1/models</span>. Les clients changent une base URL.</li>
+              <li><strong>BifrostAI embarqué</strong> comme bibliothèque : aucun proxy HTTP dans le chemin.</li>
+              <li><strong>RAG sous <span class="mono">/v1/rag/*</span></strong>, avec la même clé, scopé au projet qui la possède.</li>
+              <li><strong>Chaque retrieval déclare sa méthode</strong> : graphe HNSW ou scan exact, avec <span class="mono">degraded</span> dans la réponse.</li>
+            </ul>
+          </div>
+          <div class="card" style="padding:24px;">
+            <div class="stat">0 <small>service externe requis pour tourner : SQLite, cache en mémoire et runtime ONNX vivent dans le processus.</small></div>
+          </div>
+        </div>
+      </div>
+      <div class="footer"><span>Bridge Gateway · présentation</span><span>3 / 18</span></div>
+    </section>
+
+    <!-- 4 · parcours -->
+    <section class="slide">
+      <div class="eyebrow">Le parcours</div>
+      <div class="body">
+        <h2>Quatre étapes d'une installation vide à une réponse citée.</h2>
+        <div class="cols four">
+          <div class="card">
+            <span class="num">01</span>
+            <h3>Créer un projet</h3>
+            <p>Provider et configuration active : modèle, prompt, tier et format de réponse vivent là.</p>
+          </div>
+          <div class="card">
+            <span class="num">02</span>
+            <h3>Émettre une clé</h3>
+            <p>Le secret est affiché une fois. Seul son SHA-256 est stocké ; la clé ne voit que son projet.</p>
+          </div>
+          <div class="card">
+            <span class="num">03</span>
+            <h3>Indexer les documents</h3>
+            <p>Texte, Markdown, HTML, CSV, JSON, YAML, XML, PDF et images.</p>
+          </div>
+          <div class="card">
+            <span class="num">04</span>
+            <h3>Poser la question</h3>
+            <p>API ou banc d'essai ; la réponse cite les passages retrouvés.</p>
+          </div>
+        </div>
+        <p class="note">Upload synchrone : au retour de la requête, les passages sont stockés, vectorisés et indexés.</p>
+      </div>
+      <div class="footer"><span>Bridge Gateway · présentation</span><span>4 / 18</span></div>
+    </section>
+
+    <!-- 5 · garde-fous -->
+    <section class="slide">
+      <div class="eyebrow">Garde-fous</div>
+      <div class="body">
+        <h2>Chaque règle existe à cause d'une manière précise de se tromper.</h2>
+        <div style="display:grid; gap:8px;">
+          <div class="rule"><span class="k">01</span><div><p><strong>Le projet vient de la clé.</strong> La master key est refusée sur <span class="mono">/v1/rag/*</span> : une clé ne peut pas lire le corpus d'un autre tenant.</p></div></div>
+          <div class="rule"><span class="k">02</span><div><p><strong>Même espace vectoriel.</strong> Un passage n'est classé que si son modèle et sa largeur correspondent à la requête ; sinon on compare des espaces étrangers.</p></div></div>
+          <div class="rule"><span class="k">03</span><div><p><strong>Une panne d'index n'est jamais un 5xx.</strong> Tout état non prêt bascule sur le scan cosinus exact et l'annonce avec <span class="mono">degraded: true</span>.</p></div></div>
+          <div class="rule"><span class="k">04</span><div><p><strong>Une suppression est visible avant la réponse.</strong> Les tombstones filtrent les passages au query time ; un document supprimé ne peut pas réapparaître.</p></div></div>
+        </div>
+      </div>
+      <div class="footer"><span>Bridge Gateway · présentation</span><span>5 / 18</span></div>
+    </section>
+
+    <!-- 6 · architecture -->
+    <section class="slide">
+      <div class="eyebrow">Architecture</div>
+      <div class="body">
+        <h2>Les dépendances pointent vers l'intérieur, et le compilateur peut le prouver.</h2>
+        <svg class="diagram" viewBox="0 0 1144 300" role="img" aria-labelledby="arch-title arch-desc">
+          <title id="arch-title">Couches de Bridge Gateway</title>
+          <desc id="arch-desc">Les couches handlers et web importent application, qui importe domain. Infrastructure implémente les ports de domain. Aucune flèche ne pointe vers l'extérieur.</desc>
+          <defs>
+            <marker id="arch-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="#0f6b64" />
+            </marker>
+          </defs>
+
+          <rect class="dg-box" x="16" y="8" width="360" height="100" />
+          <text class="dg-h" x="34" y="38">handlers/ · web/</text>
+          <text class="dg-sub" x="34" y="63">API OpenAI-compatible · console HTMX</text>
+          <text class="dg-sub" x="34" y="84">ports côté consommateur</text>
+
+          <rect class="dg-box" x="444" y="8" width="332" height="100" />
+          <text class="dg-h" x="462" y="38">application/</text>
+          <text class="dg-sub" x="462" y="63">chat · rag · auth · tenancy · catalog</text>
+          <text class="dg-sub" x="462" y="84">use cases ; dépendent des ports</text>
+
+          <rect class="dg-core" x="844" y="8" width="284" height="284" />
+          <text class="dg-h" x="862" y="38">domain/</text>
+          <text class="dg-sub" x="862" y="63">entités et règles, aucune I/O</text>
+          <text class="dg-mono" x="862" y="94">Project · APIKey · Provider</text>
+          <text class="dg-mono" x="862" y="115">ChatConfig · Document · Chunk</text>
+          <text class="dg-mono" x="862" y="136">LLMProvider · ChunkIndex</text>
+          <text class="dg-mono" x="862" y="157">routing · errs · RAG settings</text>
+
+          <rect class="dg-box" x="16" y="172" width="760" height="120" />
+          <text class="dg-h" x="34" y="202">infrastructure/</text>
+          <text class="dg-sub" x="34" y="227">SQLite · Bifrost · ONNX Runtime · HNSW</text>
+          <text class="dg-sub" x="34" y="248">caches · metrics · PDF → Markdown · OCR</text>
+          <text class="dg-sub" x="34" y="269">implémente les ports de domain</text>
+
+          <path class="dg-edge" d="M 376 58 H 436" marker-end="url(#arch-arrow)" />
+          <text class="dg-label" x="406" y="46" text-anchor="middle">importe</text>
+          <path class="dg-edge" d="M 776 58 H 836" marker-end="url(#arch-arrow)" />
+          <text class="dg-label" x="806" y="46" text-anchor="middle">importe</text>
+          <path class="dg-edge" d="M 776 232 H 836" marker-end="url(#arch-arrow)" />
+          <text class="dg-label" x="806" y="220" text-anchor="middle">implémente</text>
+        </svg>
+        <p class="note">Composition root : <span class="mono">app.go</span>, <span class="mono">app_server.go</span> et <span class="mono">wiring.go</span> assemblent les adapters. Changer un cache, un routeur ou un index est un changement de wiring.</p>
+      </div>
+      <div class="footer"><span>Bridge Gateway · présentation</span><span>6 / 18</span></div>
+    </section>
+
+    <!-- 7 · chemins d'appel -->
+    <section class="slide">
+      <div class="eyebrow">Ports et adapters à l'exécution</div>
+      <div class="body">
+        <h2>Deux chemins, une règle : le use case nomme une interface.</h2>
+        <div class="lanes">
+          <div class="lane">
+            <div class="lane-label">Chat</div>
+            <div class="row">
+              <div class="node"><strong>handlers/chat</strong><span>forme OpenAI</span></div>
+              <div class="arrow">→</div>
+              <div class="node"><strong>application/chat</strong><span>enrichissement</span></div>
+              <div class="arrow">→</div>
+              <div class="node"><strong>LLMProvider</strong><span>port, pas d'I/O</span></div>
+              <div class="arrow">→</div>
+              <div class="node"><strong>Bifrost SDK</strong><span>appel provider</span></div>
+            </div>
+          </div>
+          <div class="lane">
+            <div class="lane-label">RAG</div>
+            <div class="row">
+              <div class="node"><strong>handlers/rag</strong><span>clé → projet</span></div>
+              <div class="arrow">→</div>
+              <div class="node"><strong>application/rag</strong><span>query · search</span></div>
+              <div class="arrow">→</div>
+              <div class="node"><strong>ChunkIndex</strong><span>port, pas d'I/O</span></div>
+              <div class="arrow">→</div>
+              <div class="node"><strong>ragindex</strong><span>HNSW ou exact</span></div>
+            </div>
+          </div>
+        </div>
+        <p class="note">Streaming est un port séparé : un provider qui ne sait pas streamer n'a pas à faire semblant. Les contract tests exercent chaque adapter contre le même port.</p>
+      </div>
+      <div class="footer"><span>Bridge Gateway · présentation</span><span>7 / 18</span></div>
+    </section>
+
+    <!-- 8 · console -->
+    <section class="slide">
+      <div class="eyebrow">La console</div>
+      <div class="body">
+        <h2>Providers et modèles vivent enfin dans un seul catalogue.</h2>
+        <div class="cols three">
+          <div class="card">
+            <span class="num">Une page</span>
+            <h3>Un groupe par provider</h3>
+            <p>Nom, Base URL, clé masquée et modèles rattachés. Les providers sans modèle affichent un état vide explicite.</p>
+          </div>
+          <div class="card">
+            <span class="num">Actions</span>
+            <h3>Tout est conservé</h3>
+            <p>Créer, modifier et supprimer un provider ; ajouter et retirer un modèle. Les routes POST et DELETE ne changent pas.</p>
+          </div>
+          <div class="card">
+            <span class="num">Compatibilité</span>
+            <h3>Les anciens liens marchent</h3>
+            <p><span class="mono">/models</span> redirige vers <span class="mono">/providers</span>. Chaque action HTMX renvoie le catalogue complet, déjà groupé.</p>
+          </div>
+        </div>
+        <p class="note">UI 100 % server-rendered avec HTMX : aucun bundle JavaScript. Interface en français ; code, commentaires et erreurs API en anglais.</p>
+      </div>
+      <div class="footer"><span>Bridge Gateway · présentation</span><span>8 / 18</span></div>
+    </section>
+
+    <!-- 9 · ingestion -->
+    <section class="slide">
+      <div class="eyebrow">Ingestion</div>
+      <div class="body">
+        <h2>Le format est l'endroit où la qualité du retrieval se gagne.</h2>
+        <div class="cols three">
+          <div class="card">
+            <span class="num">PDF</span>
+            <h3>Page → Markdown</h3>
+            <p>Titres par taille de police, listes par indentation, paragraphes recollés, césures réparées. Pure Go : ni Poppler ni Java.</p>
+          </div>
+          <div class="card">
+            <span class="num">Images</span>
+            <h3>Pixels → texte</h3>
+            <p>Transcription par le modèle vision de la configuration active, dans l'ordre de lecture ; description factuelle si l'image n'a pas de texte.</p>
+          </div>
+          <div class="card">
+            <span class="num">Chunks</span>
+            <h3>Frontières respectées</h3>
+            <p><span class="mono">fixed</span>, <span class="mono">sentence</span>, <span class="mono">markdown</span>, <span class="mono">semantic</span>. La découpe vise la taille cible mais s'aligne sur les paragraphes.</p>
+          </div>
+        </div>
+        <p class="note">Limites explicites : 25 MiB par upload, fichiers Office refusés, PDF scanné sans couche texte refusé plutôt qu'indexé comme du bruit.</p>
+      </div>
+      <div class="footer"><span>Bridge Gateway · présentation</span><span>9 / 18</span></div>
+    </section>
+
+    <!-- 10 · retrieval -->
+    <section class="slide">
+      <div class="eyebrow">Retrieval</div>
+      <div class="body">
+        <h2>La recherche dit toujours ce qu'elle a réellement fait.</h2>
+        <div class="cols two" style="gap:34px; align-items:start;">
+          <ul class="clean">
+            <li><strong>dense</strong> : HNSW par projet ; à froid, en construction, en dépassement ou en erreur → scan cosinus exact.</li>
+            <li><strong>hybrid</strong> : BM25 sur les mêmes passages, fusion par Reciprocal Rank Fusion ; un acronyme ou une référence ne se perd pas.</li>
+            <li><strong>MMR optionnel</strong> : lambda 0,1–1 (défaut 0,7), pool de candidats au moins égal à <span class="mono">top_k</span>.</li>
+            <li><strong>Le graphe n'est jamais persisté</strong> : reconstruit depuis SQLite au démarrage ; les suppressions sont des tombstones.</li>
+          </ul>
+          <div class="card" style="padding:22px;">
+            <div class="stat">1 <small>graphe par projet, avec son propre budget mémoire (64 MB par défaut).</small></div>
+            <p class="note" style="margin-top:14px;">Chaque réponse expose l'état de l'index et <span class="mono">degraded</span>. Un fallback n'est pas une erreur cachée : c'est un champ lisible.</p>
+          </div>
+        </div>
+      </div>
+      <div class="footer"><span>Bridge Gateway · présentation</span><span>10 / 18</span></div>
+    </section>
+
+    <!-- 11 · données -->
+    <section class="slide">
+      <div class="eyebrow">Données et sécurité</div>
+      <div class="body">
+        <h2>Un seul fichier à sauvegarder, et une chose volontairement absente.</h2>
+        <div class="cols two" style="gap:34px;">
+          <ul class="clean">
+            <li><strong>8 tables</strong> : projets, configurations, clés, providers, modèles, réglages RAG, documents, chunks.</li>
+            <li><strong>Lignes uniformes</strong> : <span class="mono">(id, payload JSON)</span>, avec index JSON sur les champs filtrés.</li>
+            <li><strong>Clés API</strong> : SHA-256 seulement ; le secret en clair n'existe qu'à la création.</li>
+          </ul>
+          <ul class="clean">
+            <li><strong>Le graphe HNSW n'est pas persisté</strong> : il se reconstruit depuis les vecteurs stockés.</li>
+            <li><strong>Caches bornés</strong> : lectures 15 s / 2 048 entrées ; réponses LLM 5 min / 512.</li>
+            <li><strong>Import JSON legacy idempotent</strong> : les IDs existants gagnent, les fichiers importés sont renommés <span class="mono">.imported</span>.</li>
+          </ul>
+        </div>
+      </div>
+      <div class="footer"><span>Bridge Gateway · présentation</span><span>11 / 18</span></div>
+    </section>
+
+    <!-- 12 · isolation et monitoring -->
+    <section class="slide">
+      <div class="eyebrow">Isolation et observabilité</div>
+      <div class="body">
+        <h2>Le projet est la frontière de tout.</h2>
+        <div class="cols three">
+          <div class="card">
+            <span class="num">Portée</span>
+            <h3>Config, clés, corpus</h3>
+            <p>Chaque configuration, clé et corpus appartient à un projet. Une seule configuration active par projet.</p>
+          </div>
+          <div class="card">
+            <span class="num">Index</span>
+            <h3>Un graphe, un plafond</h3>
+            <p>Chaque projet a son propre graphe et son budget mémoire : un gros corpus ne peut pas évincer l'index d'un autre.</p>
+          </div>
+          <div class="card">
+            <span class="num">Console</span>
+            <h3>Monitoring intégré</h3>
+            <p>Trafic, p50/p95/p99, routes, erreurs, 100 derniers appels LLM, export JSON/CSV, flux SSE à 2 images/s.</p>
+          </div>
+        </div>
+        <p class="note">Les clés projet authentifient <span class="mono">/v1/*</span> contre leur configuration active. La master key n'ouvre pas <span class="mono">/v1/rag/*</span>.</p>
+      </div>
+      <div class="footer"><span>Bridge Gateway · présentation</span><span>12 / 18</span></div>
+    </section>
+
+    <!-- 13 · routage -->
+    <section class="slide">
+      <div class="eyebrow">Modèles et routage</div>
+      <div class="body">
+        <h2>Local par défaut, cloud par configuration.</h2>
+        <div class="cols two" style="gap:34px; align-items:start;">
+          <ul class="clean">
+            <li><strong>Embeddings par préfixe</strong> : <span class="mono">onnx/…</span> → runtime local, <span class="mono">local/…</span> → embedder déterministe, sinon Bifrost.</li>
+            <li><strong>Défauts hors ligne</strong> : all-MiniLM-L6-v2 (384 dimensions) et SmolLM2 135M.</li>
+            <li><strong>Tiers fast &lt; balanced &lt; frontier</strong>, classifieur local <span class="mono">granite4:tiny-h</span>, confiance minimale 0,6.</li>
+            <li><strong>Échec d'un tier</strong> : montée d'un cran, refroidissement 60 s, timeout classifieur 10 s.</li>
+          </ul>
+          <div class="card" style="padding:22px;">
+            <div class="stat">off <small>routing désactivé par défaut : le classifieur est sur le chemin critique de chaque requête non cachée.</small></div>
+            <p class="note" style="margin-top:14px;">Rate limit, quota, contexte, panne et credential rejeté sont retryables ; validation et annulation ne le sont pas.</p>
+          </div>
+        </div>
+      </div>
+      <div class="footer"><span>Bridge Gateway · présentation</span><span>13 / 18</span></div>
+    </section>
+
+    <!-- 14 · technique -->
+    <section class="slide dark">
+      <div class="eyebrow">Sous le capot · technique</div>
+      <div class="body">
+        <h2>Une architecture que le compilateur peut vérifier.</h2>
+        <div class="cols two" style="gap:38px; align-items:start;">
+          <ul class="clean">
+            <li><strong>DDD + hexagonal</strong> : domain sans I/O, application en use cases, infrastructure en adapters.</li>
+            <li><strong>Ports côté consommateur</strong> ; streaming est un port séparé. Chaque adapter est substituable.</li>
+            <li><strong>37 packages</strong> · 181 fichiers Go de production · 19 989 lignes.</li>
+            <li><strong>57 fichiers de test</strong> · 347 tests · suite exécutée avec <span class="mono">-race</span>.</li>
+          </ul>
+          <div class="card" style="padding:22px;">
+            <p class="mono" style="margin:0; line-height:2;">caps : 300 lignes / fichier<br>40 lignes / fonction<br>3 niveaux d'imbrication<br><br>CI : gofmt · go vet · caps · race · build</p>
+            <p class="note" style="margin-top:14px;">Chiffres mesurés dans ce dépôt en novembre 2026. Les tests sont exclus des plafonds de taille.</p>
+          </div>
+        </div>
+      </div>
+      <div class="footer"><span>Bridge Gateway · partie technique</span><span>14 / 18</span></div>
+    </section>
+
+    <!-- 15 · opérations -->
+    <section class="slide">
+      <div class="eyebrow">Exploitation</div>
+      <div class="body">
+        <h2>Le conteneur construit un binaire qu'il peut réellement exécuter.</h2>
+        <div class="cols two" style="gap:34px; align-items:start;">
+          <ul class="clean">
+            <li><strong>Deux étages glibc</strong> : builder golang, runtime <span class="mono">debian:bookworm-slim</span> + CA.</li>
+            <li><strong>Pas de scratch ni Alpine</strong> : purego charge l'ONNX Runtime via libdl/libc ; un loader musl casse au démarrage.</li>
+            <li><strong>Garde au build</strong> : le runtime exécute le binaire une fois ; un mismatch d'architecture échoue au build, pas au déploiement.</li>
+          </ul>
+          <div class="card" style="padding:22px;">
+            <p class="mono" style="margin:0; line-height:1.9;">un service compose<br>SQLite sur volume<br>config.yaml en lecture seule<br>artefacts ONNX au premier démarrage<br>BIFROST_MASTER_KEY avant exposition</p>
+            <p class="note" style="margin-top:14px;">Render : un seul Docker Web Service, master key en secret. L'arrêt HTTP est gracieux.</p>
+          </div>
+        </div>
+      </div>
+      <div class="footer"><span>Bridge Gateway · présentation</span><span>15 / 18</span></div>
+    </section>
+
+    <!-- 16 · limites -->
+    <section class="slide">
+      <div class="eyebrow">Limites</div>
+      <div class="body">
+        <h2>Ce que ce n'est pas, dit aussi clairement que le reste.</h2>
+        <div class="cols two" style="gap:34px;">
+          <ul class="clean">
+            <li><strong>Mono-processus.</strong> Deux instances sur le même fichier SQLite construisent chacune leur graphe : correct, coûteux, non supporté.</li>
+            <li><strong>Index en mémoire.</strong> Après un redémarrage, les premières requêtes utilisent le scan exact jusqu'au rebuild.</li>
+            <li><strong>Cible ≤ 10 000 chunks par projet.</strong> Au-delà, les hypothèses de recall et de latence ne tiennent plus.</li>
+          </ul>
+          <ul class="clean">
+            <li><strong>Défauts HNSW provisoires.</strong> M, efConstruction et efSearch n'ont pas de benchmark commité ni de gate CI.</li>
+            <li><strong>Scans et fichiers Office exclus.</strong> Un PDF sans couche texte est refusé, pas indexé comme du bruit.</li>
+            <li><strong>Pas d'éviction entre projets.</strong> Chaque plafond est par projet, donc les graphes inactifs restent résidents.</li>
+          </ul>
+        </div>
+      </div>
+      <div class="footer"><span>Bridge Gateway · présentation</span><span>16 / 18</span></div>
+    </section>
+
+    <!-- 17 · prochaines étapes -->
+    <section class="slide">
+      <div class="eyebrow">Prochaines étapes</div>
+      <div class="body">
+        <h2>Trois priorités, dans l'ordre où la preuve les impose.</h2>
+        <div class="cols three">
+          <div class="card">
+            <span class="num">01</span>
+            <h3>Mesurer le recall, figer les défauts</h3>
+            <p>Benchmark manuel du spec sur 10k chunks contre le scan exact ; enregistrer les paramètres gagnants.</p>
+          </div>
+          <div class="card">
+            <span class="num">02</span>
+            <h3>Mettre l'index sur le dashboard</h3>
+            <p>Build time, nœuds, tombstones et taux de fallback existent déjà ; les agréger transforme <span class="mono">degraded</span> en alerte.</p>
+          </div>
+          <div class="card">
+            <span class="num">03</span>
+            <h3>Décider la topologie multi-instance</h3>
+            <p>Index partagé ou graphes par instance, avec le compromis documenté. Aujourd'hui : un processus, un fichier.</p>
+          </div>
+        </div>
+        <p class="note">L'ordre compte : le recall détermine s'il faut changer le graphe, le chunker ou le modèle d'embedding.</p>
+      </div>
+      <div class="footer"><span>Bridge Gateway · présentation</span><span>17 / 18</span></div>
+    </section>
+
+    <!-- 18 · clôture -->
+    <section class="slide title">
+      <div class="eyebrow">La question</div>
+      <div class="title-grid" style="flex:1; align-items:center;">
+        <div>
+          <h1>Quel corpus, et quel budget de latence ?</h1>
+          <p class="lede">L'architecture est en place. Le recall et la latence sur votre corpus sont les deux
+            chiffres à établir avant de généraliser.</p>
+        </div>
+        <dl class="kv">
+          <div><dt>À retenir</dt><dd>Chaque retrieval dit s'il a utilisé le graphe ou le scan exact.</dd></div>
+          <div><dt>À décider</dt><dd>Benchmark maintenant, ou déployer avec les défauts provisoires.</dd></div>
+        </dl>
+      </div>
+      <div class="footer"><span>Bridge Gateway · novembre 2026</span><span>docs/bridge-gateway-presentation.html · 18 / 18</span></div>
+    </section>
+
+  </div>
+</div>
+
+<div class="hint" data-pptx-ignore>← → · espace · home / end · F pour le plein écran</div>
+
+<div class="chrome" data-pptx-ignore>
+  <button id="prev" aria-label="Slide précédente">←</button>
+  <span class="counter" id="counter">1 / 18</span>
+  <button id="next" aria-label="Slide suivante">→</button>
+</div>
+
+<script>
+  const slides = [...document.querySelectorAll('.slide')];
+  const stage = document.getElementById('stage');
+  const counter = document.getElementById('counter');
+  const progress = document.getElementById('progress');
+  let index = Math.min(slides.length - 1, Math.max(0, (parseInt(location.hash.slice(1), 10) || 1) - 1));
+
+  function show(next, replaceHash) {
+    index = (next + slides.length) % slides.length;
+    slides.forEach((slide, position) => slide.classList.toggle('active', position === index));
+    counter.textContent = `${index + 1} / ${slides.length}`;
+    progress.style.width = `${((index + 1) / slides.length) * 100}%`;
+    if (replaceHash !== false) {
+      try {
+        history.replaceState(null, '', `#${index + 1}`);
+      } catch (error) {
+        location.hash = String(index + 1);
+      }
+    }
+  }
+
+  function fit() {
+    const scale = Math.min(window.innerWidth / 1280, window.innerHeight / 720) * 0.94;
+    stage.style.transform = `scale(${scale})`;
+  }
+
+  window.addEventListener('resize', fit);
+  window.addEventListener('hashchange', () => {
+    const target = (parseInt(location.hash.slice(1), 10) || 1) - 1;
+    if (target !== index) show(target, false);
+  });
+
+  document.addEventListener('keydown', (event) => {
+    const key = event.key;
+    if (key === 'ArrowRight' || key === 'PageDown' || key === ' ' || key === 'Enter') {
+      event.preventDefault();
+      show(index + 1);
+    } else if (key === 'ArrowLeft' || key === 'PageUp' || key === 'Backspace') {
+      event.preventDefault();
+      show(index - 1);
+    } else if (key === 'Home') {
+      event.preventDefault();
+      show(0);
+    } else if (key === 'End') {
+      event.preventDefault();
+      show(slides.length - 1);
+    } else if (key === 'f' || key === 'F') {
+      if (document.fullscreenElement) document.exitFullscreen();
+      else document.documentElement.requestFullscreen();
+    }
+  });
+
+  document.getElementById('prev').addEventListener('click', () => show(index - 1));
+  document.getElementById('next').addEventListener('click', () => show(index + 1));
+
+  let touchStart = null;
+  document.addEventListener('touchstart', (event) => { touchStart = event.changedTouches[0].clientX; }, { passive: true });
+  document.addEventListener('touchend', () => {
+    if (touchStart === null) return;
+    const delta = event.changedTouches[0].clientX - touchStart;
+    if (Math.abs(delta) > 48) show(index + (delta < 0 ? 1 : -1));
+    touchStart = null;
+  }, { passive: true });
+
+  fit();
+  show(index, true);
+</script>
+</body>
+</html>

@@ -15,12 +15,17 @@ type providersController struct {
 // ---- Providers ----
 
 func (s *providersController) pageProviders(w http.ResponseWriter, r *http.Request) {
-	providers := s.providerList(r.Context())
+	groups, err := s.catalogGroups(r.Context())
+	if err != nil {
+		s.renderToast(w, "#models-error", err.Error())
+		return
+	}
 	s.render(w, "page_providers", map[string]any{
-		"Active":    "providers",
-		"Title":     "Providers",
-		"Providers": providers,
-		"Create":    providerFormData{Action: "/providers"},
+		"Active":        "providers",
+		"Title":         "Providers & modèles",
+		"Groups":        groups,
+		"ProviderNames": s.providerNames(r.Context()),
+		"Create":        providerFormData{Action: "/providers"},
 	})
 }
 
@@ -73,9 +78,13 @@ func (s *providersController) editProviderForm(w http.ResponseWriter, r *http.Re
 }
 
 func (s *providersController) renderProvidersList(w http.ResponseWriter, r *http.Request) {
-	providers := s.providerList(r.Context())
+	groups, err := s.catalogGroups(r.Context())
+	if err != nil {
+		s.renderToast(w, "#providers-error", err.Error())
+		return
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	s.render(w, "provider_rows", map[string]any{"Providers": providers})
+	s.render(w, "catalog_groups", map[string]any{"Groups": groups})
 }
 
 type providerFormData struct {

@@ -18,9 +18,9 @@ before each call.
   directly in the process.
 - **Multi-provider abstraction** — one OpenAI-compatible surface for cloud and
   local providers, including private OpenAI-compatible gateways.
-- **HTMX web UI** — chat, models, providers, projects, per-project
-  configurations and API keys, monitoring, plus RAG settings and a RAG test
-  bench; server-rendered fragments with no external JavaScript bundle.
+- **HTMX web UI** — chat, a unified provider and model catalog, projects,
+  per-project configurations and API keys, monitoring, plus RAG settings and a
+  RAG test bench; server-rendered fragments with no external JavaScript bundle.
 - **Business enrichment** — system-prompt injection, default model selection,
   strict response formats and generation parameters.
 - **Multi-tenant projects** — every configuration belongs to a project; API
@@ -42,6 +42,13 @@ before each call.
   `/monitoring/events` and a JSON snapshot at `/monitoring/metrics.json`.
 - **SQLite persistence** — a single file, no external database or cache
   service. Legacy JSON stores from `data/` are imported automatically.
+
+## Presentation
+
+A self-contained deck presents the product and its architecture:
+
+- [`docs/bridge-gateway-presentation.html`](docs/bridge-gateway-presentation.html) — opens in a browser, no build or network;
+- [`docs/bridge-gateway-presentation.pptx`](docs/bridge-gateway-presentation.pptx) — native, editable PowerPoint export.
 
 ## Architecture
 
@@ -220,7 +227,7 @@ flowchart TD
 │   ├── rag.go              # RAG settings page and project selection
 │   ├── rag_test_page.go    # RAG upload, corpus, query/search handlers
 │   ├── templates/  static/
-├── docs/                   # embedded OpenAPI document
+├── docs/                   # embedded OpenAPI document and slide deck
 ├── tests/                  # end-to-end delivery tests
 └── tools/caps/             # readability cap checker
 ```
@@ -261,9 +268,10 @@ port is configured.
 |---|---|---|
 | `/` | GET | Chat page |
 | `/chat/send` | POST | Send a message, return HTMX bubbles |
-| `/models` | GET/POST | List or add catalog models |
+| `/models` | GET | Redirect to `/providers` (legacy URL) |
+| `/models` | POST | Add a catalog model |
 | `/models/{id}` | DELETE | Remove a catalog model |
-| `/providers` | GET/POST | List or create providers |
+| `/providers` | GET/POST | Unified provider catalog with models, create a provider |
 | `/providers/{id}/edit` | GET | Provider edit fragment |
 | `/providers/{id}` | POST/DELETE | Update or delete a provider |
 | `/projects` | GET/POST | List or create projects |
